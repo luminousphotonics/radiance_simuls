@@ -1,0 +1,42 @@
+
+PI = 3.141592653589793;
+DEG2RAD = PI/180;
+acat(x) = if(x, abs(x), 1e-9);
+
+{ Helper: Angle from normal (0 to PI/2) }
+theta(dx, dy, dz) = Acos(dz);
+
+{ Gaussian Symmetric }
+{ A1 = FWHM in degrees }
+gauss_sym(dx, dy, dz, fwhm) = 
+    let(
+        sigma = (fwhm * DEG2RAD) / 2.355,
+        ang = theta(dx, dy, dz),
+        exp(-0.5 * (ang/sigma)^2)
+    );
+
+{ Elliptical }
+{ A1 = FWHM_X, A2 = FWHM_Y }
+gauss_ellip(dx, dy, dz, fx, fy) =
+    let(
+        sx = (fx * DEG2RAD) / 2.355,
+        sy = (fy * DEG2RAD) / 2.355,
+        ang = theta(dx, dy, dz),
+        azi = Atan2(dy, dx),
+        s_eff = sx * sy / sqrt((sy*cos(azi))^2 + (sx*sin(azi))^2),
+        exp(-0.5 * (ang/s_eff)^2)
+    );
+
+{ Batwing Approximation (simplified) }
+{ A1 = FWHM, A2 = Dip Factor (0.0 to 1.0) }
+batwing(dx, dy, dz, fwhm, k) =
+    let(
+        base = gauss_sym(dx, dy, dz, fwhm),
+        ang = theta(dx, dy, dz),
+        peak_ang = (fwhm * 0.4) * DEG2RAD,
+        dip = 1.0 - k * exp(-0.5 * (ang / (0.3*peak_ang))^2),
+        base * dip
+    );
+    
+{ Dispatcher }
+opt_dist(dx, dy, dz) = 1.0; 

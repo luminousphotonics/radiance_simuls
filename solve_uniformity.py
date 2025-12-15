@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+# solve_uniformity.py
+# Compute per-ring powers w for target PPFD using basis_A and a smoothed LSQ.
+
+import argparse
+import json
+from pathlib import Path
+
+import numpy as np
+from scipy.optimize import lsq_linear, linprog
+
+from ppfd_metrics import compute_ppfd_metrics, format_ppfd_metrics_line
+
+
+def parse_args():
+    ap = argparse.ArgumentParser(
+        description="Ring-wise Radiance photonic density uniformity solver"
+    )
+    ap.add_argument("--basis", default="basis_A.npy",
+                    help="Basis matrix file (npy or csv)")
+    ap.add_argument("--target-ppfd", type=float, default=1200.0,
+                    help="Target mean PPFD (µmol/m²/s)")
+    ap.add_argument("--w-min", type=float, default=10.0,
+                    help="Lower bound on per-ring power scale (W per module)")
+    ap.add_argument("--w-max", type=float, default=100.0,
+                    help="Upper bound on per-ring power scale (W per module)")
+    ap.add_argument("--lambda-s", type=float, nargs="+", default=[0.0, 1e-3, 1e-2, 1e-1, 1.0, 10.0, 30.0],
+                    help="Smoothing weights to try (L2 on ring differences)")
+    ap.add_argument("--lambda-r", type=float, nargs="+", default=[0.0, 1e-3, 1e-2, 1e-1],
+                    help="Ridge weights to try (L2 on absolute ring powers)")
+    ap.add_argument("--lambda-mean", type=float, default=10.0,
+                    help="Weight on enforcing the target mean PPFD")
+    ap.add_argument("--use-chebyshev", action="store_true", default=False,
+                    help="Also try a Chebyshev (minimax) solve to shrink max error")
+    ap.add_argument("--tol-mean", type=float, default=0.005,
+                    help="Relative tolerance on mean PPFD after rescale (0.005 = 0.5%)")
+    ap.add_argument("--out-json", default="ring_powers_optimized.json",
+                    help="Output JSON with ring powers and metrics")
+    ap.add_argument("--legacy-metrics", action="store_true", default=False,
+                    help="Also compute/log legacy std/CV/DOU metrics")
+    return ap.parse_args()
+
+
+def load_basis(path: Path) -> np.ndarray:
+    if path.suffix == ".npy":
+        return np.load(path)
+    # assume csv/tsv
+    return np.loadtxt(path, delimiter=",")
+
+
+def build_D(K: int) -> np.ndarray:
+    """Finite difference matrix for ring-to-ring smoothing: (K-1)×K."""
+    D = np.zeros((K - 1, K), dtype=float)
+    for i in range(K - 1):
+        D[i, i] = 1.0
+        D[i, i + 1] = -1.0
+    return D
+
+
+def metrics_from_field(p: np.ndarray, *, setpoint_ppfd: float | None = None, legacy_metrics: bool = False) -> dict:
+    return compute_ppfd_metrics(p, setpoint_ppfd=setpoint_ppfd, legacy_metrics=legacy_metrics)
+
+
+def main():
+    args = parse_args()
+
+    basis_path = Path(args.basis)
+    if not basis_path.exists():
+        raise SystemExit(f"Basis file not found: {basis_path}")
+
+    A = load_basis(basis_path)
+    n_points, K = A.shape
+    print(f"Loaded A with shape (n_points={n_points}, n_rings={K})")
+
+    target_mu = float(args.target_ppfd)
+    w_min = float(args.w_min)
+    w_max = float(args.w_max)
+
+    lambdas_s = [float(l) for l in args.lambda_s]
+    lambdas_r = [float(l) for l in args.lambda_r]
+    lambda_mean = float(args.lambda_mean)
+    print("Trying lambda_s values:", lambdas_s)
+    print("Trying lambda_r values:", lambdas_r)
+    print(f"Mean weight lambda_mean={lambda_mean}")
+
+    best = None  # (score, lambda_s, w, metrics)
+
+    # Precompute ones vector
+    ones = np.ones((n_points,), dtype=float)
+
+    # Precompute mean row to anchor the overall average PPFD
+    mean_row = A.mean(axis=0, keepdims=True)  # shape (1, K)
+
+    for lam_s in lambdas_s:
+        for lam_r in lambdas_r:
+            print(f"\n--- lambda_s = {lam_s}, lambda_r = {lam_r} ---")
+
+            aug_rows = [A]
+            aug_rhs = [target_mu * ones]
+
+            if lam_s > 0.0:
+                D = build_D(K)
+                aug_rows.append(np.sqrt(lam_s) * D)
+                aug_rhs.append(np.zeros((K - 1,), dtype=float))
+
+            if lam_r > 0.0:
+                aug_rows.append(np.sqrt(lam_r) * np.eye(K))
+                aug_rhs.append(np.zeros((K,), dtype=float))
+
+            if lambda_mean > 0.0:
+                aug_rows.append(np.sqrt(lambda_mean) * mean_row)
+                aug_rhs.append(np.array([np.sqrt(lambda_mean) * target_mu], dtype=float))
+
+            A_aug = np.vstack(aug_rows)
+            b_aug = np.concatenate(aug_rhs)
+
+            res = lsq_linear(
+                A_aug,
+                b_aug,
+                bounds=(w_min, w_max),
+                method="trf",
+            )
+
+
+            if not res.success:
+                print(f"  lsq_linear did not converge: {res.message}")
+                continue
+
+            w_raw = res.x
+            p_raw = A @ w_raw
+            m_raw = float(p_raw.mean())
+
+            print(f"  raw mean={m_raw:.3f}, target={target_mu:.3f}")
+
+            # Rescale to hit target mean (approximately), then clip to bounds
+            if m_raw > 0:
+                alpha = target_mu / m_raw
+            else:
+                alpha = 1.0
+
+            w_scaled = np.clip(alpha * w_raw, w_min, w_max)
+            p_scaled = A @ w_scaled
+            m_scaled = float(p_scaled.mean())
+
+            print(f"  scaled mean={m_scaled:.3f} (alpha={alpha:.4f})")
+
+            # Compute metrics on scaled field
+            m = metrics_from_field(p_scaled, setpoint_ppfd=target_mu, legacy_metrics=args.legacy_metrics)
+            print(" ", format_ppfd_metrics_line(m))
+
+            # Score: prioritize low CV; tie-break with smoother ring steps and higher Min/Avg
+            diffs = np.diff(w_scaled)
+            smooth_pen = np.std(diffs) / max(1e-9, np.mean(w_scaled))
+            legacy = m.get("legacy") or {}
+            score = (float(legacy.get("cv_percent", float("inf"))), smooth_pen, -float(legacy.get("min_over_avg", 0.0)))
+
+            if best is None or score < best[0]:
+                best = (score, (lam_s, lam_r), w_scaled, m)
+
+    # Optional Chebyshev (minimax) solve to minimize worst-case error
+    if args.use_chebyshev:
+        print("\n--- Chebyshev (minimax) solve ---")
+        # Decision variables: w[0..K-1], t
+        c = np.zeros(K + 1, dtype=float)
+        c[-1] = 1.0  # minimize t
+
+        A_ub = np.vstack([
+            np.hstack([A, -np.ones((n_points, 1), dtype=float)]),
+            np.hstack([-A, -np.ones((n_points, 1), dtype=float)]),
+        ])
+        b_ub = np.concatenate([
+            target_mu * np.ones((n_points,), dtype=float),
+            -target_mu * np.ones((n_points,), dtype=float),
+        ])
+
+        A_eq = np.hstack([mean_row, np.zeros((1, 1), dtype=float)])
+        b_eq = np.array([target_mu], dtype=float)
+
+        bounds = [(w_min, w_max)] * K + [(0.0, None)]
+
+        res_lp = linprog(
+            c,
+            A_ub=A_ub,
+            b_ub=b_ub,
+            A_eq=A_eq,
+            b_eq=b_eq,
+            bounds=bounds,
+            method="highs",
+        )
+
+        if res_lp.success:
+            w_lp = res_lp.x[:K]
+            p_lp = A @ w_lp
+            m_lp = metrics_from_field(p_lp, setpoint_ppfd=target_mu, legacy_metrics=args.legacy_metrics)
+            print(
+                f"  minimax t={res_lp.fun:.3f}  "
+                + format_ppfd_metrics_line(m_lp)
+            )
+            legacy_lp = m_lp.get("legacy") or {}
+            score_lp = (float(legacy_lp.get("cv_percent", float("inf"))), -float(legacy_lp.get("min_over_avg", 0.0)))
+            if best is None or score_lp < best[0]:
+                best = (score_lp, ("chebyshev", None), w_lp, m_lp)
+        else:
+            print(f"  Chebyshev solve failed: {res_lp.message}")
+
+    if best is None:
+        raise SystemExit("No successful solution found.")
+
+    score, lam_pair_best, w_best, m_best = best
+    print("\n=== Best solution ===")
+    if lam_pair_best[0] == "chebyshev":
+        print("strategy=chebyshev (minimax)")
+    else:
+        print(f"lambda_s={lam_pair_best[0]}, lambda_r={lam_pair_best[1]}, lambda_mean={lambda_mean}")
+    print("ring powers (W per module):")
+    for i, wi in enumerate(w_best):
+        print(f"  ring {i}: {wi:.3f} W")
+
+    print(format_ppfd_metrics_line(m_best))
+
+    out = {
+        "target_ppfd": target_mu,
+        "strategy": "chebyshev" if lam_pair_best[0] == "chebyshev" else "lsq",
+        "lambda_s_best": None if lam_pair_best[0] == "chebyshev" else lam_pair_best[0],
+        "lambda_r_best": None if lam_pair_best[0] == "chebyshev" else lam_pair_best[1],
+        "lambda_mean": lambda_mean,
+        "ring_indices": list(range(K)),
+        "ring_powers_W_per_module": [float(x) for x in w_best],
+        "metrics": m_best,
+        "basis_file": str(basis_path),
+        "n_points": int(n_points),
+    }
+    Path(args.out_json).write_text(json.dumps(out, indent=2))
+    print(f"\nSaved {args.out_json}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,13 @@
+{
+  "1": { "kind": "bat",   "fwhm": 51, "bat_k": 0.75 },
+  "2": { "kind": "bat",   "fwhm": 47, "bat_k": 0.75 },
+  "3": { "kind": "sym",   "fwhm": 45 },
+  "4": { "kind": "sym",   "fwhm": 43 },
+  "5": { "kind": "sym",   "fwhm": 39 },
+  "6": { "kind": "ellip", "ex": 33, "ey": 24 },
+  "7": {
+    "kind": "ellip_mix",
+    "edge_ex": 27, "edge_ey": 20,
+    "corner_ex": 25, "corner_ey": 18
+  }
+}

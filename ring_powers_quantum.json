@@ -1,0 +1,35 @@
+{
+  "target_ppfd": 1150.0,
+  "strategy": "lsq",
+  "lambda_s_best": 0.0,
+  "lambda_r_best": 0.0,
+  "lambda_mean": 10.0,
+  "ring_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "ring_powers_W_per_module": [
+    91.93064076732034,
+    92.78766998229182,
+    91.72184207465551,
+    93.3622171180051,
+    87.53230911506083,
+    113.03891828879742
+  ],
+  "metrics": {
+    "mean": 1150.0000000000002,
+    "std": 24.46596444347308,
+    "cv_percent": 2.127475168997659,
+    "dou_percent": 97.87252483100234,
+    "min": 1075.5786410875774,
+    "max": 1208.097862190673,
+    "min_over_avg": 0.9352857748587627,
+    "min_over_max": 0.8903075444047263
+  },
+  "basis_file": "/Users/austinrouse/radiance_simuls/basis_quantum.npy",
+  "n_points": 225
+}

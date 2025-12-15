@@ -1,0 +1,18 @@
+Quantum Board emitter summary:
+  rings       : 6  (center=ring 0)
+  modules     : 127
+  spacing     : 0.3484 m (outer margin 0.000 m)
+  patch_x/y   : 285.8 mm × 173.6 mm
+  subgrid     : 1x1
+  ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_quantum.json
+  derate      : 0.8220 (= DRIVER_EFF 0.950 × THERMAL_EFF 0.920 × BOARD_OPT_EFF 0.950 × WIRING_EFF 0.990 × user_scale(EFF_SCALE env) 1.000)
+  per-ring watts (per module, input → effective):
+    ring 0:  91.93 W in ( 75.57 W eff) × 7 boards
+    ring 1:  92.79 W in ( 76.27 W eff) × 16 boards
+    ring 2:  91.72 W in ( 75.40 W eff) × 20 boards
+    ring 3:  93.36 W in ( 76.74 W eff) × 24 boards
+    ring 4:  87.53 W in ( 71.95 W eff) × 28 boards
+    ring 5: 113.04 W in ( 92.92 W eff) × 32 boards
+  total electrical input ≈ 12271.4 W
+  total effective (derated) ≈ 10087.1 W
+  avg PPE (mix) ≈ 3.300 µmol/J → total photons ≈ 33287 µmol/s

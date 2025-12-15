@@ -1,0 +1,14 @@
+{
+  "n_points": 225,
+  "n_rings": 6,
+  "ring_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "sensor_file": "sensor_points.txt",
+  "basis_unit_w_per_module": 1.0
+}

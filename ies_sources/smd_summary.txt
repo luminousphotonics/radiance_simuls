@@ -1,0 +1,17 @@
+SMD macro emitter summary:
+  rings       : 6  (center=ring 0)
+  modules     : 61  (A001844)
+  spacing     : 0.2527 m  (outer margin 0.000 m)
+  patch side  : 120.0 mm
+  optics      : disabled (Lambertian)
+  subgrid     : 1x1
+  ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_optimized.json
+  per-ring watts (per module):
+    ring 0: 67.19 W × 1 mods
+    ring 1: 14.13 W × 4 mods
+    ring 2: 82.20 W × 8 mods
+    ring 3:  8.42 W × 12 mods
+    ring 4: 60.00 W × 16 mods
+    ring 5: 82.20 W × 20 mods
+  total electrical power ≈ 3486.4 W
+  avg PPE (mix) ≈ 3.394 µmol/J → total photons ≈ 11834 µmol/s

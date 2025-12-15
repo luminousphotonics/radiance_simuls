@@ -1,0 +1,4 @@
+SPYDR 3 3h47
+fixtures=15  bars/fixture=6
+PPF/fixture=2200 umol/s  derate=0.843
+TOTAL PPF ≈ 27803 umol/s
