@@ -20,6 +20,16 @@ import subprocess
 from pathlib import Path
 from PySide6 import QtWidgets, QtGui, QtCore
 
+# --- optional metrics helpers (cap-based PPFD metrics) ---
+try:
+    import numpy as np
+    from ppfd_metrics import compute_ppfd_metrics, format_ppfd_metrics_line
+except Exception:  # pragma: no cover
+    np = None
+    compute_ppfd_metrics = None
+    format_ppfd_metrics_line = None
+
+
 ROOT = Path(__file__).resolve().parent
 ACCENT = "#FFD700"
 BG = "#000000"
@@ -151,7 +161,7 @@ class MainWindow(QtWidgets.QWidget):
         # --- Top controls ---
         top = QtWidgets.QGridLayout()
         row = 0
-        self.mode = QtWidgets.QComboBox(); self.mode.addItems(["SMD", "Quantum Board", "Competitor"])
+        self.mode = QtWidgets.QComboBox(); self.mode.addItems(["SMD", "COB", "Quantum Board", "Competitor"])
         top.addWidget(QtWidgets.QLabel("Mode"), row, 0)
         top.addWidget(self.mode, row, 1)
 
@@ -178,7 +188,7 @@ class MainWindow(QtWidgets.QWidget):
         room = QtWidgets.QGridLayout(room_box)
         self.length = QtWidgets.QLineEdit("12")
         self.width = QtWidgets.QLineEdit("12")
-        self.target = QtWidgets.QLineEdit("800")
+        self.target = QtWidgets.QLineEdit("1000")
         room.addWidget(QtWidgets.QLabel("Length (ft)"), 0, 0); room.addWidget(self.length, 0, 1)
         room.addWidget(QtWidgets.QLabel("Width (ft)"), 0, 2);  room.addWidget(self.width, 0, 3)
         room.addWidget(QtWidgets.QLabel("Target PPFD"), 0, 4); room.addWidget(self.target, 0, 5)
@@ -209,16 +219,22 @@ class MainWindow(QtWidgets.QWidget):
         self.sim_mode = QtWidgets.QComboBox(); self.sim_mode.addItems(["instant","fast","quality","direct"])
         self.os = QtWidgets.QLineEdit("4")
         self.subgrid = QtWidgets.QLineEdit("1")
+        self.mount_z = QtWidgets.QLineEdit("0.4572")
         self.optics = QtWidgets.QComboBox(); self.optics.addItems(["none","lens"])
-        self.overlay = QtWidgets.QComboBox(); self.overlay.addItems(["auto","smd","spydr3","quantum","both","none"])
-        self.qb_perim = QtWidgets.QCheckBox("Edge-to-edge perimeter (Quantum)")
+        self.overlay = QtWidgets.QComboBox(); self.overlay.addItems(["auto","smd","spydr3","quantum","cob","both","none"])
+        self.qb_perim = QtWidgets.QCheckBox("Fill Perimeter (Quantum)")
         self.qb_perim.setChecked(False)
+        self.cob_base_ring = QtWidgets.QLineEdit("6")
+        self.cob_wall_clear_in = QtWidgets.QLineEdit("3.0")
         sim.addWidget(QtWidgets.QLabel("Sim mode"), 0, 0); sim.addWidget(self.sim_mode, 0, 1)
         sim.addWidget(QtWidgets.QLabel("Oversample (OS)"), 0, 2); sim.addWidget(self.os, 0, 3)
         sim.addWidget(QtWidgets.QLabel("Subpatch grid"), 1, 0); sim.addWidget(self.subgrid, 1, 1)
-        sim.addWidget(QtWidgets.QLabel("Optics"), 1, 2); sim.addWidget(self.optics, 1, 3)
+        sim.addWidget(QtWidgets.QLabel("Mount Z (m)"), 1, 2); sim.addWidget(self.mount_z, 1, 3)
+        sim.addWidget(QtWidgets.QLabel("Optics"), 2, 2); sim.addWidget(self.optics, 2, 3)
         sim.addWidget(QtWidgets.QLabel("Overlay"), 2, 0); sim.addWidget(self.overlay, 2, 1)
         sim.addWidget(self.qb_perim, 3, 0, 1, 4)
+        sim.addWidget(QtWidgets.QLabel("COB base ring (pitch)"), 4, 0); sim.addWidget(self.cob_base_ring, 4, 1)
+        sim.addWidget(QtWidgets.QLabel("COB wall clearance (in)"), 5, 0); sim.addWidget(self.cob_wall_clear_in, 5, 1)
         sim_box.layout().addLayout(sim)
         row_boxes.addWidget(sim_box, 1)
 
@@ -273,6 +289,30 @@ class MainWindow(QtWidgets.QWidget):
         vlay.addStretch(1)
         self.viewer_tabs.addTab(vtab, "3D Scatter")
 
+        # Metrics
+        self.metrics_text = QtWidgets.QPlainTextEdit()
+        self.metrics_text.setReadOnly(True)
+        self.metrics_text.setStyleSheet(f"""
+            QPlainTextEdit {{
+                background-color: #0f0f0f;
+                color: {FG};
+                border: 1px solid {ACCENT};
+                font-family: 'Fira Code', 'Consolas', monospace;
+                font-size: 11pt;
+            }}
+        """)
+        self.btn_refresh_metrics = QtWidgets.QPushButton("Refresh metrics")
+        self.btn_copy_metrics = QtWidgets.QPushButton("Copy metrics")
+        mtab = QtWidgets.QWidget()
+        mlay = QtWidgets.QVBoxLayout(mtab)
+        mbtns = QtWidgets.QHBoxLayout()
+        mbtns.addWidget(self.btn_refresh_metrics)
+        mbtns.addWidget(self.btn_copy_metrics)
+        mbtns.addStretch(1)
+        mlay.addLayout(mbtns)
+        mlay.addWidget(self.metrics_text)
+        self.viewer_tabs.addTab(mtab, "Metrics")
+
         self.log = LogConsole()
 
         bottom_split = QtWidgets.QSplitter(QtCore.Qt.Horizontal)
@@ -296,6 +336,8 @@ class MainWindow(QtWidgets.QWidget):
         self.btn_vis.clicked.connect(self.run_vis)
         self.btn_all.clicked.connect(self.run_all)
         self.btn_open_3d.clicked.connect(self.open_3d)
+        self.btn_refresh_metrics.clicked.connect(self.refresh_metrics_tab)
+        self.btn_copy_metrics.clicked.connect(self.copy_metrics_to_clipboard)
         self.mode.currentTextChanged.connect(self._update_button_labels)
         self._update_button_labels()
 
@@ -328,9 +370,22 @@ class MainWindow(QtWidgets.QWidget):
         env["PYTHONUNBUFFERED"] = "1"
         env["LENGTH_FT"] = self.length.text().strip() or "24"
         env["WIDTH_FT"] = self.width.text().strip() or "24"
+        # Ensure scripts can compute PPF consistently (PPF = mean_PPFD * CANOPY_AREA_M2).
+        # We treat the canopy footprint as the full room footprint shown in the heatmap.
+        try:
+            L_ft = float(env["LENGTH_FT"])
+            W_ft = float(env["WIDTH_FT"])
+            if self.align_x.isChecked() and W_ft > L_ft:
+                L_ft, W_ft = W_ft, L_ft
+            area_m2 = (L_ft * W_ft) * 0.09290304
+            if area_m2 > 0:
+                env["CANOPY_AREA_M2"] = f"{area_m2:.6f}"
+        except Exception:
+            pass
         env["MODE"] = self.sim_mode.currentText()
         env["OS"] = self.os.text().strip() or "4"
         env["SUBPATCH_GRID"] = self.subgrid.text().strip() or "1"
+        env["MOUNT_Z_M"] = self.mount_z.text().strip() or "0.4572"
         return env
 
     def _update_button_labels(self):
@@ -338,18 +393,35 @@ class MainWindow(QtWidgets.QWidget):
         if m == "Competitor":
             self.btn_run_smd.setText("Run Uniformity")
             self.btn_all.setText("Run + Visualize")
+            self.cob_base_ring.setDisabled(True)
+            self.cob_wall_clear_in.setDisabled(True)
+        elif m == "COB":
+            self.btn_run_smd.setText("Run Uniformity (COB)")
+            self.btn_all.setText("Run + Visualize (COB)")
+            # COB solver variables are W/COB per ring (physically capped).
+            if (self.wmin.text().strip() or "10") == "10":
+                self.wmin.setText("0")
+            if (self.wmax.text().strip() or "120") == "120":
+                self.wmax.setText("120")
+            self.cob_base_ring.setDisabled(False)
+            self.cob_wall_clear_in.setDisabled(False)
         elif m == "Quantum Board":
             self.btn_run_smd.setText("Run Uniformity (Quantum)")
             self.btn_all.setText("Run + Visualize (Quantum)")
+            self.cob_base_ring.setDisabled(True)
+            self.cob_wall_clear_in.setDisabled(True)
         else:
             self.btn_run_smd.setText("Run Uniformity (SMD)")
             self.btn_all.setText("Run + Visualize (SMD)")
+            self.cob_base_ring.setDisabled(True)
+            self.cob_wall_clear_in.setDisabled(True)
 
     def _env_smd(self):
         env = self._make_env_base()
         env["LAYOUT_MODE"] = self.layout_mode.currentText()
         env["ALIGN_LONG_AXIS_X"] = "1" if self.align_x.isChecked() else "0"
-        env["TARGET_PPFD"] = self.target.text().strip() or "800"
+        env["PPE_IS_SYSTEM"] = "1"
+        env["TARGET_PPFD"] = self.target.text().strip() or "1000"
         env["RUN_BASIS"] = "1" if self.run_basis.isChecked() else "0"
         env["W_MIN"] = self.wmin.text().strip() or "10"
         env["W_MAX"] = self.wmax.text().strip() or "120"
@@ -383,7 +455,7 @@ class MainWindow(QtWidgets.QWidget):
         env["SPYDR_Z_M"] = self.sp_z.text().strip() or "0.4572"
         env["EFF_SCALE"] = self.sp_eff.text().strip() or "1.0"
         env["SPYDR_PPE_UMOL_PER_J"] = self.sp_ppe.text().strip() or "2.76"
-        env["TARGET_PPFD"] = self.target.text().strip() or "800"
+        env["TARGET_PPFD"] = self.target.text().strip() or "1000"
         env["MARGIN_IN"] = "0"
         env["ALIGN_LONG_AXIS_X"] = "1" if align else "0"
         return env
@@ -393,7 +465,8 @@ class MainWindow(QtWidgets.QWidget):
         env = self._make_env_base()
         env["LAYOUT_MODE"] = self.layout_mode.currentText()
         env["ALIGN_LONG_AXIS_X"] = "1" if self.align_x.isChecked() else "0"
-        env["TARGET_PPFD"] = self.target.text().strip() or "800"
+        env["PPE_IS_SYSTEM"] = "1"
+        env["TARGET_PPFD"] = self.target.text().strip() or "1000"
         env["RUN_BASIS"] = "1" if self.run_basis.isChecked() else "0"
         env["W_MIN"] = self.wmin.text().strip() or "10"
         env["W_MAX"] = self.wmax.text().strip() or "120"
@@ -403,13 +476,396 @@ class MainWindow(QtWidgets.QWidget):
         env["USE_CHEBYSHEV"] = "1" if self.cheby.isChecked() else "0"
         env["SUBPATCH_GRID"] = self.subgrid.text().strip() or "1"
         env["QB_EDGE_PERIM"] = "1" if self.qb_perim.isChecked() else "0"
+        env["QB_PERIM_INSET_M"] = "0.0" if self.qb_perim.isChecked() else "0.02"
+        return env
+
+    def _env_cob(self):
+        # Same solver knobs as SMD, routed to the COB pipeline.
+        env = self._make_env_base()
+        env["LAYOUT_MODE"] = self.layout_mode.currentText()
+        env["ALIGN_LONG_AXIS_X"] = "1" if self.align_x.isChecked() else "0"
+        env["TARGET_PPFD"] = self.target.text().strip() or "1000"
+        env["RUN_BASIS"] = "1" if self.run_basis.isChecked() else "0"
+        env["W_MIN"] = self.wmin.text().strip() or "10"
+        env["W_MAX"] = self.wmax.text().strip() or "120"
+        env["COB_BASE_RING_N"] = self.cob_base_ring.text().strip() or "6"
+        env["COB_WALL_CLEARANCE_IN"] = self.cob_wall_clear_in.text().strip() or "3.0"
+        env["COB_STRIP_MIN_RING"] = "1"
+        env["LAMBDA_S"] = self.lams.text().strip()
+        env["LAMBDA_R"] = self.lamr.text().strip()
+        env["LAMBDA_MEAN"] = self.lammean.text().strip() or "10"
+        env["USE_CHEBYSHEV"] = "1" if self.cheby.isChecked() else "0"
         return env
 
     def _disable_buttons(self, disable=True):
         for b in (self.btn_run_smd, self.btn_run_spy, self.btn_vis, self.btn_all):
             b.setDisabled(disable)
 
-    def _run_cmd_async(self, cmd, env, on_finish=None):
+    def _ppfd_map_path(self) -> Path:
+        return ROOT / "ppfd_map.txt"
+
+    def _estimate_total_input_watts(self) -> float | None:
+        mode = self.mode.currentText()
+        if mode == "Competitor":
+            try:
+                ppe = float(self.sp_ppe.text().strip() or "0")
+            except Exception:
+                return None
+            if not (ppe > 0):
+                return None
+            emitted_ppf = self._estimate_total_emitted_ppf()
+            if emitted_ppf is None:
+                return None
+            return emitted_ppf / ppe
+
+        summ = self._summary_path_for_mode()
+        if summ and summ.exists():
+            try:
+                txt = summ.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                return None
+            watts = None
+            for ln in txt.splitlines():
+                s = ln.strip()
+                if "total effective" in s:
+                    parts = s.replace("≈", " ").replace("W", " ").split()
+                    for tok in parts:
+                        try:
+                            watts = float(tok)
+                            break
+                        except ValueError:
+                            continue
+                    if watts is not None:
+                        break
+                if "total electrical power" in s and watts is None:
+                    parts = s.replace("≈", " ").replace("W", " ").split()
+                    for tok in parts:
+                        try:
+                            watts = float(tok)
+                            break
+                        except ValueError:
+                            continue
+            if watts is not None and watts > 0:
+                return watts
+        return None
+
+    def _estimate_total_emitted_ppf(self) -> float | None:
+        mode = self.mode.currentText()
+        if mode == "Competitor":
+            sp = ROOT / "ies_sources" / "spydr3_summary.txt"
+            if sp.exists():
+                try:
+                    txt = sp.read_text(encoding="utf-8", errors="ignore")
+                except Exception:
+                    txt = ""
+                fixtures = None
+                ppf_fixture = None
+                eff_scale = None
+                for ln in txt.splitlines():
+                    s = ln.strip()
+                    if s.startswith("fixtures="):
+                        try:
+                            fixtures = int(s.split("fixtures=", 1)[1].split()[0])
+                        except Exception:
+                            fixtures = None
+                    if "PPF/fixture=" in s and "derate(EFF_SCALE)=" in s:
+                        try:
+                            ppf_fixture = float(s.split("PPF/fixture=", 1)[1].split()[0])
+                        except Exception:
+                            ppf_fixture = None
+                        try:
+                            eff_scale = float(s.split("derate(EFF_SCALE)=", 1)[1].split()[0])
+                        except Exception:
+                            eff_scale = None
+                if fixtures and ppf_fixture and eff_scale is not None:
+                    total_ppf = float(ppf_fixture) * int(fixtures) * float(eff_scale)
+                    return total_ppf if total_ppf > 0 else None
+
+            try:
+                sp_ppf = float(self.sp_ppf.text().strip() or "0")
+                eff_scale = float(self.sp_eff.text().strip() or "1.0")
+            except Exception:
+                return None
+            try:
+                env_spy = self._env_spydr()
+                nx = int(env_spy.get("NX", "1"))
+                ny = int(env_spy.get("NY", "1"))
+            except Exception:
+                nx = ny = 1
+            fixtures = max(1, nx * ny)
+            total_ppf = sp_ppf * fixtures * eff_scale
+            return total_ppf if total_ppf > 0 else None
+
+        summ = self._summary_path_for_mode()
+        if summ and summ.exists():
+            try:
+                txt = summ.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                return None
+            for ln in txt.splitlines():
+                s = ln.strip()
+                if "total photons" in s:
+                    parts = s.replace("≈", " ").replace("µmol/s", " ").replace("umol/s", " ").split()
+                    for tok in parts:
+                        try:
+                            v = float(tok)
+                            return v if v > 0 else None
+                        except ValueError:
+                            continue
+        return None
+
+    def _summary_path_for_mode(self) -> Path | None:
+        m = self.mode.currentText()
+        if m == "Quantum Board":
+            return ROOT / "ies_sources" / "quantum_summary.txt"
+        if m == "COB":
+            return ROOT / "ies_sources" / "cob_summary.txt"
+        if m == "Competitor":
+            return None
+        return ROOT / "ies_sources" / "smd_summary.txt"
+
+    def _metrics_text_block(self) -> str:
+        lines: list[str] = []
+        mode = self.mode.currentText()
+        lines.append(f"Mode: {mode}")
+
+        # Room + target
+        try:
+            length_ft = float(self.length.text())
+            width_ft = float(self.width.text())
+        except Exception:
+            length_ft = width_ft = 0.0
+        align = self.align_x.isChecked()
+        if align and width_ft > length_ft:
+            length_ft, width_ft = width_ft, length_ft
+        area_m2 = (length_ft * width_ft) * 0.09290304 if (length_ft > 0 and width_ft > 0) else None
+        if area_m2:
+            lines.append(f"Room: {length_ft:.2f} ft x {width_ft:.2f} ft  (area={area_m2:.3f} m^2)")
+        else:
+            lines.append("Room: (invalid dimensions)")
+
+        try:
+            cap = float(self.target.text().strip())
+        except Exception:
+            cap = None
+        lines.append(f"Cap/setpoint PPFD: {cap:.2f} µmol/m²/s" if cap else "Cap/setpoint PPFD: (not set)")
+        if cap:
+            lines.append(f"Coverage thresholds (after peak-capping): 90%={0.90*cap:.2f}, 95%={0.95*cap:.2f} µmol/m²/s")
+
+        # PPFD metrics from ppfd_map.txt
+        lines.append("")
+        lines.append("PPFD metrics (from ppfd_map.txt):")
+        if compute_ppfd_metrics is None or format_ppfd_metrics_line is None or np is None:
+            lines.append("  (metrics helpers unavailable; install numpy)")
+        else:
+            pmap = self._ppfd_map_path()
+            if not pmap.exists():
+                lines.append("  (ppfd_map.txt not found)")
+            else:
+                try:
+                    raw = pmap.read_text(encoding="utf-8", errors="ignore").splitlines()
+                except Exception as e:
+                    raw = []
+                    lines.append(f"  (failed reading ppfd_map.txt) {e}")
+
+                vals = []
+                for line in raw:
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    s = s.replace(",", " ")
+                    parts = s.split()
+                    if not parts:
+                        continue
+                    try:
+                        vals.append(float(parts[-1]))
+                    except Exception:
+                        continue
+                if not vals:
+                    lines.append("  (no parseable values found)")
+                else:
+                    watts = self._estimate_total_input_watts()
+                    emitted_ppf = self._estimate_total_emitted_ppf()
+                    m = compute_ppfd_metrics(
+                        np.asarray(vals, dtype=float),
+                        setpoint_ppfd=cap,
+                        canopy_area_m2=area_m2,
+                        total_input_watts=watts,
+                        emitted_ppf_umol_s=emitted_ppf,
+                        legacy_metrics=True,
+                    )
+                    try:
+                        if cap and float(cap) > 0:
+                            pmax = float(m.get("max", 0.0))
+                            cap_scale = float(m.get("cap_scale", 1.0))
+                            over_ppfd = pmax - float(cap)
+                            if cap_scale < 0.999999:
+                                lines.append(f"  cap status: binding (cap_scale={cap_scale:.6f}, max-cap={over_ppfd:+.2f})")
+                            else:
+                                lines.append(f"  cap status: not binding (cap_scale={cap_scale:.6f}, max-cap={over_ppfd:+.2f})")
+
+                            if mode == "Competitor":
+                                try:
+                                    eff_scale = float(self.sp_eff.text().strip() or "1.0")
+                                except Exception:
+                                    eff_scale = 1.0
+                                if eff_scale >= 0.999 and pmax < float(cap) - 1e-3:
+                                    lines.append("  note: cap is unattainable at full output (increase fixtures or PPF/fixture)")
+                    except Exception:
+                        pass
+                    lines.append(f"  {format_ppfd_metrics_line(m)}")
+                    try:
+                        if watts and "cap_scale" in m and cap:
+                            w_in = float(watts)
+                            w_cap = w_in * float(m["cap_scale"])
+                            lines.append(f"  watts_in≈{w_in:.1f} W, watts@cap≈{w_cap:.1f} W")
+                    except Exception:
+                        pass
+
+        # Electrical / efficiency
+        lines.append("")
+        lines.append("Electrical / efficiency:")
+        if mode == "Competitor":
+            try:
+                sp_ppf = float(self.sp_ppf.text().strip() or "0")
+                ppe = float(self.sp_ppe.text().strip() or "0")
+            except Exception:
+                sp_ppf = ppe = 0.0
+            try:
+                env_spy = self._env_spydr()
+                nx = int(env_spy.get("NX", "1"))
+                ny = int(env_spy.get("NY", "1"))
+            except Exception:
+                nx = ny = 1
+            fixtures = max(1, nx * ny)
+            eff_scale_used = None
+            total_ppf_used = self._estimate_total_emitted_ppf()
+            sp_sum = ROOT / "ies_sources" / "spydr3_summary.txt"
+            if sp_sum.exists():
+                try:
+                    txt = sp_sum.read_text(encoding="utf-8", errors="ignore").rstrip()
+                    for ln in txt.splitlines():
+                        if "derate(EFF_SCALE)=" in ln:
+                            try:
+                                eff_scale_used = float(ln.split("derate(EFF_SCALE)=", 1)[1].split()[0])
+                            except Exception:
+                                eff_scale_used = None
+                except Exception:
+                    pass
+            if eff_scale_used is None:
+                try:
+                    eff_scale_used = float(self.sp_eff.text().strip() or "1.0")
+                except Exception:
+                    eff_scale_used = 1.0
+            if total_ppf_used is None:
+                total_ppf_used = sp_ppf * fixtures * eff_scale_used
+
+            lines.append(f"  fixtures={fixtures} (NX={nx}, NY={ny})  PPF/fixture={sp_ppf:.2f} µmol/s  dimmer={eff_scale_used:.4f}")
+            lines.append(f"  total PPF ≈ {float(total_ppf_used):.2f} µmol/s")
+            if ppe > 0:
+                lines.append(f"  PPE={ppe:.3f} µmol/J  → estimated power ≈ {float(total_ppf_used)/ppe:.1f} W")
+            else:
+                lines.append("  PPE: (not set)")
+        else:
+            if mode == "COB":
+                report = ROOT / "ies_sources" / "cob_solver_report.txt"
+                if report.exists():
+                    try:
+                        txt = report.read_text(encoding="utf-8", errors="ignore").rstrip()
+                        for ln in txt.splitlines():
+                            lines.append(f"  {ln}")
+                        lines.append("")
+                    except Exception:
+                        pass
+            summ = self._summary_path_for_mode()
+            if summ and summ.exists():
+                try:
+                    txt = summ.read_text(encoding="utf-8", errors="ignore").rstrip()
+                except Exception as e:
+                    txt = f"(failed to read {summ}) {e}"
+                for ln in txt.splitlines():
+                    lines.append(f"  {ln}")
+            else:
+                lines.append("  (summary file not found yet; run a simulation first)")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    def refresh_metrics_tab(self) -> None:
+        try:
+            self.metrics_text.setPlainText(self._metrics_text_block())
+        except Exception as e:
+            self.metrics_text.setPlainText(f"(metrics render failed) {e}\n")
+
+    def copy_metrics_to_clipboard(self) -> None:
+        try:
+            QtWidgets.QApplication.clipboard().setText(self.metrics_text.toPlainText())
+        except Exception:
+            pass
+
+    def _append_cap_metrics_from_map(self, *, label: str = "CAP_METRICS") -> None:
+        """Append cap-based PPFD metrics for the latest ppfd_map.txt to the log."""
+        if compute_ppfd_metrics is None or format_ppfd_metrics_line is None or np is None:
+            return
+        pmap = self._ppfd_map_path()
+        if not pmap.exists():
+            return
+        try:
+            raw = pmap.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:
+            return
+
+        vals = []
+        for line in raw:
+            s = line.strip()
+            if not s or s.startswith('#'):
+                continue
+            s = s.replace(',', ' ')
+            parts = s.split()
+            if not parts:
+                continue
+            try:
+                vals.append(float(parts[-1]))
+            except Exception:
+                continue
+        if not vals:
+            return
+
+        # cap/setpoint: the user-entered Target PPFD is treated as the canopy ceiling for the cap-math.
+        cap = None
+        try:
+            cap = float(self.target.text().strip())
+        except Exception:
+            cap = None
+
+        # optional area for PPF reporting (full room footprint)
+        area_m2 = None
+        try:
+            L_ft = float(self.length.text())
+            W_ft = float(self.width.text())
+            if self.align_x.isChecked() and W_ft > L_ft:
+                L_ft, W_ft = W_ft, L_ft
+            area_m2 = (L_ft * W_ft) * 0.09290304
+        except Exception:
+            area_m2 = None
+
+        try:
+            watts = self._estimate_total_input_watts()
+            emitted_ppf = self._estimate_total_emitted_ppf()
+            m = compute_ppfd_metrics(
+                np.asarray(vals, dtype=float),
+                setpoint_ppfd=cap,
+                canopy_area_m2=area_m2,
+                total_input_watts=watts,
+                emitted_ppf_umol_s=emitted_ppf,
+                legacy_metrics=True,
+            )
+            self.log.append_line(f"{label}: {format_ppfd_metrics_line(m)}")
+        except Exception as e:
+            self.log.append_line(f"{label}: (metrics failed) {e}")
+        self.refresh_metrics_tab()
+
+
+    def _run_cmd_async(self, cmd, env, on_finish=None, *, compute_metrics=False):
         self._disable_buttons(True)
         self.log.append_line(f"$ {' '.join(cmd)}")
         proc = QtCore.QProcess(self)
@@ -436,6 +892,8 @@ class MainWindow(QtWidgets.QWidget):
             self._disable_buttons(False)
             if on_finish:
                 on_finish(code)
+            if compute_metrics and code == 0:
+                self._append_cap_metrics_from_map()
             proc.deleteLater()
 
         proc.readyReadStandardOutput.connect(handle_ready)
@@ -447,14 +905,17 @@ class MainWindow(QtWidgets.QWidget):
         mode = self.mode.currentText()
         if mode == "Quantum Board":
             env = self._env_quantum()
-            self._run_cmd_async(["bash", str(ROOT/"run_uniformity_quantum.sh")], env)
+            self._run_cmd_async(["bash", str(ROOT/"run_uniformity_quantum.sh")], env, compute_metrics=True)
+        elif mode == "COB":
+            env = self._env_cob()
+            self._run_cmd_async(["bash", str(ROOT/"run_uniformity_cob.sh")], env, compute_metrics=True)
         else:
             env = self._env_smd()
-            self._run_cmd_async(["bash", str(ROOT/"run_uniformity.sh")], env)
+            self._run_cmd_async(["bash", str(ROOT/"run_uniformity.sh")], env, compute_metrics=True)
 
     def run_spydr(self):
         env = self._env_spydr()
-        self._run_cmd_async(["bash", str(ROOT/"run_simulation_spydr3.sh")], env)
+        self._run_cmd_async(["bash", str(ROOT/"run_simulation_spydr3.sh")], env, compute_metrics=True)
 
     def run_vis(self):
         env = os.environ.copy()
@@ -464,27 +925,34 @@ class MainWindow(QtWidgets.QWidget):
             overlay = "spydr3"
         if m == "Quantum Board" and overlay == "auto":
             overlay = "quantum"
+        if m == "COB" and overlay == "auto":
+            overlay = "cob"
         if m == "Competitor":
             outdir = "ppfd_visualizations_spydr3"
         elif m == "Quantum Board":
             outdir = "ppfd_visualizations_quantum"
+        elif m == "COB":
+            outdir = "ppfd_visualizations_cob"
         else:
             outdir = "ppfd_visualizations"
         cmd = ["python3", str(ROOT/"visualize_ppfd.py"), "--overlay", overlay, "--outdir", outdir]
-        self._run_cmd_async(cmd, env, on_finish=lambda rc: self.load_visuals(outdir))
+        self._run_cmd_async(cmd, env, on_finish=lambda rc: (self.load_visuals(outdir), self.refresh_metrics_tab()))
 
     def run_all(self):
         # run appropriate pipeline then visualize
         m = self.mode.currentText()
         if m == "Competitor":
             self._run_cmd_async(["bash", str(ROOT/"run_simulation_spydr3.sh")], self._env_spydr(),
-                                on_finish=lambda rc: self.run_vis())
+                                on_finish=lambda rc: self.run_vis(), compute_metrics=True)
         elif m == "Quantum Board":
             self._run_cmd_async(["bash", str(ROOT/"run_uniformity_quantum.sh")], self._env_quantum(),
-                                on_finish=lambda rc: self.run_vis())
+                                on_finish=lambda rc: self.run_vis(), compute_metrics=True)
+        elif m == "COB":
+            self._run_cmd_async(["bash", str(ROOT/"run_uniformity_cob.sh")], self._env_cob(),
+                                on_finish=lambda rc: self.run_vis(), compute_metrics=True)
         else:
             self._run_cmd_async(["bash", str(ROOT/"run_uniformity.sh")], self._env_smd(),
-                                on_finish=lambda rc: self.run_vis())
+                                on_finish=lambda rc: self.run_vis(), compute_metrics=True)
 
     def load_visuals(self, outdir: str):
         out = Path(outdir)
@@ -513,7 +981,15 @@ class MainWindow(QtWidgets.QWidget):
 
     def open_3d(self):
         # Open 3D scatter in default browser
-        outdir = "ppfd_visualizations" if self.mode.currentText() == "SMD" else "ppfd_visualizations_spydr3"
+        m = self.mode.currentText()
+        if m == "Competitor":
+            outdir = "ppfd_visualizations_spydr3"
+        elif m == "Quantum Board":
+            outdir = "ppfd_visualizations_quantum"
+        elif m == "COB":
+            outdir = "ppfd_visualizations_cob"
+        else:
+            outdir = "ppfd_visualizations"
         html = Path(outdir) / "ppfd_scatter_3d.html"
         if html.exists():
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(html.resolve())))

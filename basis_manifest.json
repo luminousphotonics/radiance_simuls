@@ -10,5 +10,17 @@
     5
   ],
   "sensor_file": "sensor_points.txt",
-  "basis_unit_w_per_module": 1.0
+  "basis_unit_w_per_module": 1.0,
+  "generator": "generate_emitters_smd.py",
+  "generator_sha256": "fc49ccbace7cb03d1153d576c4d3b2f17faea192dc448841c7bd5eaf78eac79e",
+  "emitter_env": {
+    "PPE_IS_SYSTEM": 1,
+    "DRIVER_EFF": 0.95,
+    "THERMAL_EFF": 0.92,
+    "BOARD_OPT_EFF": 0.95,
+    "WIRING_EFF": 0.99,
+    "EFF_SCALE": 1.0,
+    "OPTICS": "none",
+    "SUBPATCH_GRID": 1
+  }
 }

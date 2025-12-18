@@ -25,6 +25,9 @@ BAR_SPACING_IN  = float(os.getenv("SPYDR_BAR_SPACING_IN", "8"))
 BAR_WIDTH_IN    = float(os.getenv("SPYDR_BAR_WIDTH_IN", "3"))
 BAR_LENGTH_IN   = float(os.getenv("SPYDR_BAR_LENGTH_IN", "47"))
 TOTAL_WIDTH_IN  = float(os.getenv("SPYDR_TOTAL_WIDTH_IN", "43"))
+# SPYDR_PPF is treated as fixture/system-level photon flux (µmol/s).
+# EFF_SCALE is the only scaling applied here (dimmer fraction); this avoids any
+# chance of "double derating" from electrical efficiency assumptions.
 DERATE          = float(os.getenv("EFF_SCALE", "1.0"))
 if DERATE < 0.0:
     print(f"NOTE: EFF_SCALE {DERATE} < 0; clamping to 0.0")
@@ -167,7 +170,7 @@ def main():
     total_ppf = PPF_FIXTURE * len(layout["fixtures"]) * DERATE
     (OUT_DIR/"spydr3_summary.txt").write_text(
         f"SPYDR 3 {MODEL}\nfixtures={len(layout['fixtures'])}  bars/fixture={BARS}\n"
-        f"PPF/fixture={PPF_FIXTURE:.0f} umol/s  derate={DERATE:.3f}\n"
+        f"PPF/fixture={PPF_FIXTURE:.0f} umol/s  PPF_IS_SYSTEM=1  derate(EFF_SCALE)={DERATE:.3f}\n"
         f"TOTAL PPF ≈ {total_ppf:.0f} umol/s\n"
     )
     (OUT_DIR/"spydr3_layout.json").write_text(json.dumps(layout, indent=2))

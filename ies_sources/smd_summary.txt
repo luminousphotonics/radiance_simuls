@@ -6,12 +6,16 @@ SMD macro emitter summary:
   optics      : disabled (Lambertian)
   subgrid     : 1x1
   ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_optimized.json
-  per-ring watts (per module):
-    ring 0: 67.19 W × 1 mods
-    ring 1: 14.13 W × 4 mods
-    ring 2: 82.20 W × 8 mods
-    ring 3:  8.42 W × 12 mods
-    ring 4: 60.00 W × 16 mods
-    ring 5: 82.20 W × 20 mods
-  total electrical power ≈ 3486.4 W
-  avg PPE (mix) ≈ 3.394 µmol/J → total photons ≈ 11834 µmol/s
+  PPE_IS_SYSTEM: 1  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)
+  derate      : 1.0000 (= user_scale(EFF_SCALE env) 1.000)
+  per-ring watts (per module, input → effective):
+    ring 0: 28.99 W in (28.99 W eff) × 1 mods
+    ring 1: 26.26 W in (26.26 W eff) × 4 mods
+    ring 2: 33.77 W in (33.77 W eff) × 8 mods
+    ring 3: 31.90 W in (31.90 W eff) × 12 mods
+    ring 4: 10.02 W in (10.02 W eff) × 16 mods
+    ring 5: 70.91 W in (70.91 W eff) × 20 mods
+  total electrical input ≈ 2365.5 W
+  total effective (derated) ≈ 2365.5 W
+  PPE by channel (µmol/J): B=2.400, C=2.000, CW=3.350, FR=3.600, R=4.600, UV=1.000, WW=3.350
+  avg PPE (mix) ≈ 3.394 µmol/J → total photons ≈ 8030 µmol/s

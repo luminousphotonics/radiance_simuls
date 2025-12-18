@@ -62,6 +62,7 @@ import numpy as np
 from pathlib import Path
 import json
 import os
+import hashlib
 
 root = Path(".")
 basis_dir = root / "basis_runs_quantum"
@@ -100,6 +101,21 @@ manifest = {
     "sensor_file": "sensor_points.txt",
     "basis_unit_w_per_module": float(os.environ.get("BASIS_UNIT_W", "1.0")),
     "layout": "quantum",
+    "generator": "generate_emitters_quantum.py",
+    "generator_sha256": hashlib.sha256(Path("generate_emitters_quantum.py").read_bytes()).hexdigest(),
+    "emitter_env": {
+        "PPE_IS_SYSTEM": int(os.environ.get("PPE_IS_SYSTEM", "1").strip() != "0"),
+        "DRIVER_EFF": float(os.environ.get("DRIVER_EFF", "0.95")),
+        "THERMAL_EFF": float(os.environ.get("THERMAL_EFF", "0.92")),
+        "BOARD_OPT_EFF": float(os.environ.get("BOARD_OPT_EFF", "0.95")),
+        "WIRING_EFF": float(os.environ.get("WIRING_EFF", "0.99")),
+        "EFF_SCALE": float(os.environ.get("EFF_SCALE", "1.0")),
+        "SUBPATCH_GRID": int(os.environ.get("SUBPATCH_GRID", "1")),
+        "PATCH_X_M": float(os.environ.get("PATCH_X_M", str(11.25 * 0.0254))),
+        "PATCH_Y_M": float(os.environ.get("PATCH_Y_M", str(6.833 * 0.0254))),
+        "QB_EDGE_PERIM": int(os.environ.get("QB_EDGE_PERIM", "0") == "1"),
+        "QB_PERIM_INSET_M": float(os.environ.get("QB_PERIM_INSET_M", "0.02")),
+    },
 }
 (Path("basis_manifest_quantum.json")).write_text(json.dumps(manifest, indent=2))
 

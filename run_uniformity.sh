@@ -64,6 +64,46 @@ PY
 else
   BASIS_RINGS=0
 fi
+
+# Rebuild basis if key emitter settings changed (generator file or env knobs).
+if [[ -f "${BASIS_MANIFEST}" ]]; then
+  if ! python3 - <<'PY'
+import hashlib
+import json
+import os
+from pathlib import Path
+
+manifest = json.loads(Path("basis_manifest.json").read_text())
+if "generator_sha256" not in manifest or "emitter_env" not in manifest:
+    raise SystemExit("basis manifest missing emitter fingerprint (legacy basis)")
+want_sha = hashlib.sha256(Path("generate_emitters_smd.py").read_bytes()).hexdigest()
+have_sha = manifest.get("generator_sha256", "")
+if have_sha and have_sha != want_sha:
+    raise SystemExit("basis generator changed")
+
+have_env = manifest.get("emitter_env") or {}
+want_env = {
+    "PPE_IS_SYSTEM": int(os.environ.get("PPE_IS_SYSTEM", "1").strip() != "0"),
+    "DRIVER_EFF": float(os.environ.get("DRIVER_EFF", "0.95")),
+    "THERMAL_EFF": float(os.environ.get("THERMAL_EFF", "0.92")),
+    "BOARD_OPT_EFF": float(os.environ.get("BOARD_OPT_EFF", "0.95")),
+    "WIRING_EFF": float(os.environ.get("WIRING_EFF", "0.99")),
+    "EFF_SCALE": float(os.environ.get("EFF_SCALE", "1.0")),
+    "OPTICS": os.environ.get("OPTICS", "none").strip(),
+    "SUBPATCH_GRID": int(os.environ.get("SUBPATCH_GRID", "1")),
+}
+
+for k, v in want_env.items():
+    if k not in have_env:
+        continue
+    if have_env[k] != v:
+        raise SystemExit(f"basis env changed: {k} {have_env[k]} -> {v}")
+PY
+  then
+    echo "Basis manifest differs from current emitter settings; rebuilding basis."
+    RUN_BASIS=1
+  fi
+fi
 if [[ "${BASIS_RINGS}" -ne "$((SMD_RING_N+1))" ]]; then
   echo "Basis rings (${BASIS_RINGS}) differ from layout rings ($((SMD_RING_N+1))); rebuilding basis."
   RUN_BASIS=1

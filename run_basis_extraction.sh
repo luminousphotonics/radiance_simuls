@@ -71,6 +71,7 @@ import numpy as np
 from pathlib import Path
 import json
 import os
+import hashlib
 
 root = Path(".")
 basis_dir = root / "basis_runs"
@@ -109,6 +110,18 @@ manifest = {
     "ring_indices": list(range(A.shape[1])),
     "sensor_file": "sensor_points.txt",
     "basis_unit_w_per_module": float(os.environ.get("BASIS_UNIT_W", "1.0")),
+    "generator": "generate_emitters_smd.py",
+    "generator_sha256": hashlib.sha256(Path("generate_emitters_smd.py").read_bytes()).hexdigest(),
+    "emitter_env": {
+        "PPE_IS_SYSTEM": int(os.environ.get("PPE_IS_SYSTEM", "1").strip() != "0"),
+        "DRIVER_EFF": float(os.environ.get("DRIVER_EFF", "0.95")),
+        "THERMAL_EFF": float(os.environ.get("THERMAL_EFF", "0.92")),
+        "BOARD_OPT_EFF": float(os.environ.get("BOARD_OPT_EFF", "0.95")),
+        "WIRING_EFF": float(os.environ.get("WIRING_EFF", "0.99")),
+        "EFF_SCALE": float(os.environ.get("EFF_SCALE", "1.0")),
+        "OPTICS": os.environ.get("OPTICS", "none").strip(),
+        "SUBPATCH_GRID": int(os.environ.get("SUBPATCH_GRID", "1")),
+    },
 }
 (Path("basis_manifest.json")).write_text(json.dumps(manifest, indent=2))
 

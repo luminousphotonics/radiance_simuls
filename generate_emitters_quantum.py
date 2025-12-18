@@ -51,6 +51,7 @@ PATCH_Y_M     = _env_float("PATCH_Y_M",  6.833 * 0.0254)  # ≈0.1736 m (short)
 PATCH_MAX_M   = max(PATCH_X_M, PATCH_Y_M)                 # used for spacing guard
 SUBPATCH_GRID = _env_int("SUBPATCH_GRID", 3)
 PERIM_INSET_M = _env_float("QB_PERIM_INSET_M", 0.02)
+QB_EDGE_PERIM = os.getenv("QB_EDGE_PERIM", "0").strip() == "1"
 
 # Rings: same structure as SMD solver
 RING_N        = _env_int("QB_RING_N", 7)
@@ -67,7 +68,7 @@ PER_LED_W: Dict[str, float] = {
     "WW": 0.60, "CW": 0.60, "R": 0.45, "B": 0.35, "C": 0.35, "FR": 0.35, "UV": 0.25,
 }
 PPE_UMOL_PER_J: Dict[str, float] = {
-    "WW": 3.30, "CW": 3.30, "R": 3.30, "B": 2.4, "C": 2.0, "FR": 3.6, "UV": 1.0,
+    "WW": 2.76, "CW": 2.76, "R": 2.76, "B": 2.4, "C": 2.0, "FR": 3.6, "UV": 1.0,
 }
 
 # Per-ring electrical watts (per module). Scaled from SMD baseline by ~5.04×.
@@ -78,12 +79,26 @@ RING_POWER_W: Dict[int, float] = {
 RING_POWERS_SOURCE = "quantum_builtin"
 
 # Global derating
+#
+# Important: PPE_UMOL_PER_J can either represent:
+#   (A) fixture/system-level PPE (already includes driver/thermal/optical losses), or
+#   (B) LED/board-level PPE (needs additional derate multipliers applied).
+#
+# For Quantum Board, we default to (A) to avoid double-derating when you input a
+# fixture-level efficacy like 2.80 µmol/J.
+PPE_IS_SYSTEM = os.getenv("PPE_IS_SYSTEM", "1").strip() != "0"
+
 DRIVER_EFF     = _env_float("DRIVER_EFF",     0.95)
 THERMAL_EFF    = _env_float("THERMAL_EFF",    0.92)
 BOARD_OPT_EFF  = _env_float("BOARD_OPT_EFF",  0.95)
 WIRING_EFF     = _env_float("WIRING_EFF",     0.99)
-USER_EFF_SCALE = _env_float("EFF_SCALE",      1.00)
-DERATE = DRIVER_EFF * THERMAL_EFF * BOARD_OPT_EFF * WIRING_EFF * USER_EFF_SCALE
+USER_EFF_SCALE = _env_float("EFF_SCALE",      1.00)  # dimmer fraction (0..1)
+
+if PPE_IS_SYSTEM:
+    DERATE = USER_EFF_SCALE
+else:
+    DERATE = DRIVER_EFF * THERMAL_EFF * BOARD_OPT_EFF * WIRING_EFF * USER_EFF_SCALE
+
 EFF_SCALE = DERATE
 
 # Basis mode (independent from SMD env names)
@@ -159,6 +174,99 @@ def _ring_ij(L: int):
 def _ij_to_xy(i: int, j: int, spacing: float) -> Tuple[float,float]:
     return ((i - j) * spacing / SQRT2, (i + j) * spacing / SQRT2)
 
+def _fill_perimeter_gaps(positions: list[dict], *, ring: int, z0: float) -> tuple[list[dict], int]:
+    """
+    Fill Perimeter mode:
+      - Keep the original staggered layout.
+      - Add one board in each gap between adjacent perimeter boards on the OUTERMOST ring.
+      - Added boards: horizontal on top/bottom, vertical on left/right.
+    """
+    outer_pts = [p for p in positions if int(p.get("ring", 0)) == int(ring)]
+    if not outer_pts:
+        return positions, 0
+
+    xs = [float(p["x"]) for p in outer_pts]
+    ys = [float(p["y"]) for p in outer_pts]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    tol = 1e-6
+
+    def key_xy(x: float, y: float) -> tuple[float, float]:
+        return (round(float(x), 6), round(float(y), 6))
+
+    existing = {key_xy(float(p["x"]), float(p["y"])) for p in positions}
+    added: list[dict] = []
+
+    def add_midpoints(edge_pts: list[dict], *, axis: str, orientation: str) -> None:
+        nonlocal added
+        if len(edge_pts) < 2:
+            return
+        pts_sorted = sorted(edge_pts, key=lambda p: float(p[axis]))
+        for a, b in zip(pts_sorted, pts_sorted[1:]):
+            cx = 0.5 * (float(a["x"]) + float(b["x"]))
+            cy = 0.5 * (float(a["y"]) + float(b["y"]))
+            k = key_xy(cx, cy)
+            if k in existing:
+                continue
+            existing.add(k)
+            if orientation == "vertical":
+                lx, ly = float(PATCH_Y_M), float(PATCH_X_M)
+            else:
+                lx, ly = float(PATCH_X_M), float(PATCH_Y_M)
+            added.append(
+                {"ring": int(ring), "x": round(cx, 6), "y": round(cy, 6), "z": float(z0), "lx": lx, "ly": ly}
+            )
+
+    top = [p for p in outer_pts if abs(float(p["y"]) - max_y) <= tol]
+    bottom = [p for p in outer_pts if abs(float(p["y"]) - min_y) <= tol]
+    left = [p for p in outer_pts if abs(float(p["x"]) - min_x) <= tol]
+    right = [p for p in outer_pts if abs(float(p["x"]) - max_x) <= tol]
+
+    add_midpoints(top, axis="x", orientation="horizontal")
+    add_midpoints(bottom, axis="x", orientation="horizontal")
+    add_midpoints(left, axis="y", orientation="vertical")
+    add_midpoints(right, axis="y", orientation="vertical")
+
+    return positions + added, len(added)
+
+
+def _rotate_outer_ring_left_right_vertical(
+    positions: list[dict], *, ring: int, L_m: float, W_m: float, margin_m: float
+) -> int:
+    """
+    In Fill Perimeter mode, rotate the OUTERMOST ring's left/right side boards to vertical (swap lx/ly),
+    and shift them outward so their outer edge sits close to the perimeter like the top/bottom boards.
+    """
+    outer_pts = [p for p in positions if int(p.get("ring", 0)) == int(ring)]
+    if not outer_pts:
+        return 0
+    max_ax = max(abs(float(p["x"])) for p in outer_pts)
+    tol = 1e-6
+
+    inset = float(PERIM_INSET_M)
+    # Match the "clearance" that the existing top/bottom perimeter boards already have
+    # (important for square layouts where spacing is limited by PATCH_X_M).
+    max_y = max(float(p["y"]) for p in outer_pts)
+    wall_y_edge = 0.5 * float(W_m) - float(margin_m) - inset - CLAMP_SAFE
+    top_outer_edge = max_y + 0.5 * float(PATCH_Y_M)  # top/bottom are horizontal
+    clearance = max(0.0, wall_y_edge - top_outer_edge)
+
+    wall_x_edge = 0.5 * float(L_m) - float(margin_m) - inset - CLAMP_SAFE
+    target_outer_x_edge = max(0.0, wall_x_edge - clearance)
+    x_center = max(0.0, target_outer_x_edge - 0.5 * float(PATCH_Y_M))  # vertical board x-halfwidth
+
+    rotated = 0
+    for p in outer_pts:
+        x = float(p["x"])
+        if abs(abs(x) - max_ax) > tol:
+            continue
+        sign = -1.0 if x < 0 else 1.0
+        p["lx"] = float(PATCH_Y_M)
+        p["ly"] = float(PATCH_X_M)
+        p["x"] = round(sign * x_center, 6)
+        rotated += 1
+    return rotated
+
 def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
     L_m = _env_float("LENGTH_M", _env_float("LENGTH_FT", 12.0) * 0.3048)
     W_m = _env_float("WIDTH_M",  _env_float("WIDTH_FT",  12.0) * 0.3048)
@@ -209,6 +317,7 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
                         "ly": float(PATCH_Y_M),
                     }
                 )
+        meta_edge = {"qb_edge_perim": bool(QB_EDGE_PERIM), "qb_edge_perim_rotated_corners": 0}
 
         rings_local = int(ring_n + 1)
         pitch_x = pitch_y = float(pitch_axis)
@@ -254,6 +363,20 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
         spacing_eff = float(max(pitch_x, pitch_y))
         v_max = ring_n
         layout_mode_effective = "rect_rect"
+        meta_edge = {"qb_edge_perim": bool(QB_EDGE_PERIM), "qb_edge_perim_rotated_corners": 0}
+
+    # Fill Perimeter option: keep the original layout and add boards in the outer-ring perimeter gaps.
+    if QB_EDGE_PERIM and pos:
+        outer = max(int(p.get("ring", 0)) for p in pos)
+        rotated_lr = _rotate_outer_ring_left_right_vertical(pos, ring=outer, L_m=L_m, W_m=W_m, margin_m=margin_m)
+        pos, n_added = _fill_perimeter_gaps(pos, ring=outer, z0=z0)
+        meta_edge["qb_edge_perim_filled"] = True
+        meta_edge["qb_edge_perim_added_modules"] = int(n_added)
+        meta_edge["qb_edge_perim_rotated_lr_modules"] = int(rotated_lr)
+    else:
+        meta_edge["qb_edge_perim_filled"] = False
+        meta_edge["qb_edge_perim_added_modules"] = 0
+        meta_edge["qb_edge_perim_rotated_lr_modules"] = 0
 
     xs = [p["x"] for p in pos] if pos else [0.0]
     ys = [p["y"] for p in pos] if pos else [0.0]
@@ -283,6 +406,7 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
         "usable_half_x_m": float(usable_half_x),
         "usable_half_y_m": float(usable_half_y),
         "swapped_axes": bool(swapped),
+        **meta_edge,
     }
     return pos, spacing_eff, meta
 
@@ -367,7 +491,14 @@ def write_layout_json(
         "margin": _rf(margin_m),
         "z": _rf(z_m),
         "positions": [
-            {"x": _rf(p.get("x", 0.0)), "y": _rf(p.get("y", 0.0)), "z": _rf(p.get("z", z_m)), "ring": int(p.get("ring", 0))}
+            {
+                "x": _rf(p.get("x", 0.0)),
+                "y": _rf(p.get("y", 0.0)),
+                "z": _rf(p.get("z", z_m)),
+                "ring": int(p.get("ring", 0)),
+                "lx": _rf(p.get("lx", patch_x_m)),
+                "ly": _rf(p.get("ly", patch_y_m)),
+            }
             for p in positions
         ],
     }
@@ -377,6 +508,16 @@ def write_layout_json(
             meta.pop(k, None)
         payload["meta"] = meta
     SMD_JSON.write_text(json.dumps(payload, indent=2))
+
+# ── COB mode shim (implemented in generate_emitters_cob.py) ──────────────────
+def generate_emitters_cob(*args, **kwargs):
+    """
+    COB + perimeter strip emitter generator.
+
+    Implemented in generate_emitters_cob.py to keep Quantum's main path isolated.
+    """
+    from generate_emitters_cob import generate_emitters_cob as _impl
+    return _impl(*args, **kwargs)
 
 # ── Main generation ─────────────────────────────────────────────────────────
 def main():
@@ -419,26 +560,42 @@ def main():
         / max(_per_module_nominal_watts(), 1e-9)
     )
 
+    ppe_parts = []
+    for ch in sorted(COUNT_PER_MODULE.keys()):
+        if COUNT_PER_MODULE.get(ch, 0) <= 0:
+            continue
+        ppe_parts.append(f"{ch}={PPE_UMOL_PER_J[ch]:.3f}")
+    ppe_str = ", ".join(ppe_parts) if ppe_parts else "(none)"
+
     total_umol = sum(
         _module_photon_flux_umol_s(L) * ring_counts.get(L, 0)
         for L in range(rings_local)
     )
 
+    derate_desc = (
+        f"  derate      : {DERATE:.4f} (= user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+        if PPE_IS_SYSTEM
+        else
+        f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
+        f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+    )
+
     summ = OUT_DIR / "quantum_summary.txt"
     summ.write_text(
         "Quantum Board emitter summary:\n"
-        f"  rings       : {rings_local}  (center=ring 0)\n"
-        f"  modules     : {len(positions)}\n"
-        f"  spacing     : {spacing:.4f} m (outer margin {WALL_MARGIN_M:.3f} m)\n"
-        f"  patch_x/y   : {PATCH_X_M*1e3:.1f} mm × {PATCH_Y_M*1e3:.1f} mm\n"
-        f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}\n"
-        f"  ring powers : {RING_POWERS_SOURCE}\n"
-        f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
-        f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
-        f"  per-ring watts (per module, input → effective):\n" + "\n".join(lines) + "\n"
-        f"  total electrical input ≈ {total_w_in:.1f} W\n"
-        f"  total effective (derated) ≈ {total_w_eff:.1f} W\n"
-        f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s\n"
+        + f"  rings       : {rings_local}  (center=ring 0)\n"
+        + f"  modules     : {len(positions)}\n"
+        + f"  spacing     : {spacing:.4f} m (outer margin {WALL_MARGIN_M:.3f} m)\n"
+        + f"  patch_x/y   : {PATCH_X_M*1e3:.1f} mm × {PATCH_Y_M*1e3:.1f} mm\n"
+        + f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}\n"
+        + f"  ring powers : {RING_POWERS_SOURCE}\n"
+        + f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)\n"
+        + derate_desc
+        + ("  per-ring watts (per module, input → effective):\n" + "\n".join(lines) + "\n")
+        + f"  total electrical input ≈ {total_w_in:.1f} W\n"
+        + f"  total effective (derated) ≈ {total_w_eff:.1f} W\n"
+        + f"  PPE by channel (µmol/J): {ppe_str}\n"
+        + f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s\n"
     )
 
     print("Quantum Board emitter summary:")
@@ -448,11 +605,16 @@ def main():
     print(f"  patch_x/y   : {PATCH_X_M*1e3:.1f} mm × {PATCH_Y_M*1e3:.1f} mm")
     print(f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}")
     print(f"  ring powers : {RING_POWERS_SOURCE}")
-    print(f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
-          f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})")
+    print(f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)")
+    if PPE_IS_SYSTEM:
+        print(f"  derate      : {DERATE:.4f} (= user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})")
+    else:
+        print(f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
+              f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})")
     print("  per-ring watts (per module, input → effective):"); [print(s) for s in lines]
     print(f"  total electrical input ≈ {total_w_in:.1f} W")
     print(f"  total effective (derated) ≈ {total_w_eff:.1f} W")
+    print(f"  PPE by channel (µmol/J): {ppe_str}")
     print(f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s")
     print(f"✔ Wrote {out}")
     print(f"✔ Wrote {summ}")
@@ -461,9 +623,9 @@ def main():
     write_layout_json(
         positions=positions,
         spacing_m=spacing,
-        room_L_m=LENGTH_M,
-        room_W_m=WIDTH_M,
-        margin_m=WALL_MARGIN_M,
+        room_L_m=float(meta.get("room_L_m", LENGTH_M)),
+        room_W_m=float(meta.get("room_W_m", WIDTH_M)),
+        margin_m=float(meta.get("margin_m", WALL_MARGIN_M)),
         ring_n=meta.get("ring_n", RING_N),
         patch_x_m=PATCH_X_M,
         patch_y_m=PATCH_Y_M,
@@ -474,6 +636,12 @@ def main():
             "pitch_x_m": meta.get("pitch_x_m"),
             "pitch_y_m": meta.get("pitch_y_m"),
             "rings": rings_local,
+            "qb_edge_perim": bool(meta.get("qb_edge_perim", False)),
+            "qb_edge_perim_rotated_corners": int(meta.get("qb_edge_perim_rotated_corners", 0)),
+            "qb_edge_perim_filled": bool(meta.get("qb_edge_perim_filled", False)),
+            "qb_edge_perim_added_modules": int(meta.get("qb_edge_perim_added_modules", 0)),
+            "qb_edge_perim_rotated_lr_modules": int(meta.get("qb_edge_perim_rotated_lr_modules", 0)),
+            "qb_perim_inset_m": float(PERIM_INSET_M),
         }
     )
     print("✔ Wrote ies_sources/quantum_layout.json")
