@@ -1,7 +1,7 @@
 {
   "version": 2,
   "generator": "generate_emitters_smd.py",
-  "timestamp": "2025-12-14T20:05:55.647242Z",
+  "timestamp": "2025-12-15T12:47:06.046180Z",
   "units": "meters",
   "rings": 6,
   "modules": 61,

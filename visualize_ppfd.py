@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # visualize_ppfd.py • v4.2
-# - Overlays: smd / spydr3 / both / none / auto
+# - Overlays: smd / spydr3 / quantum / cob / both / none / auto
 # - SPYDR overlay reads ies_sources/spydr3_layout.json to draw true bar rectangles
 
 import argparse, json
@@ -37,7 +37,7 @@ def parse_args():
 
     ap.add_argument(
         "--overlay",
-        choices=["auto","smd","spydr3","quantum","both","none"],
+        choices=["auto","smd","spydr3","quantum","cob","both","none"],
         default="auto",
         help="Which hardware overlay to draw on heatmaps",
     )
@@ -61,6 +61,7 @@ overlay_room_bounds = None  # (L, W) in meters if present in layout JSON
 SMD_JSON = Path("ies_sources/smd_layout.json")
 SPYDR_JSON = Path("ies_sources/spydr3_layout.json")
 QUANTUM_JSON = Path("ies_sources/quantum_layout.json")
+COB_JSON = Path("ies_sources/cob_layout.json")
 
 def _safe_mtime(p: Path) -> float:
     try:
@@ -70,7 +71,7 @@ def _safe_mtime(p: Path) -> float:
 
 def auto_pick_overlay_mode() -> str:
     candidates = []
-    for name, path in (("smd", SMD_JSON), ("spydr3", SPYDR_JSON), ("quantum", QUANTUM_JSON)):
+    for name, path in (("smd", SMD_JSON), ("spydr3", SPYDR_JSON), ("quantum", QUANTUM_JSON), ("cob", COB_JSON)):
         if path.exists():
             candidates.append((name, _safe_mtime(path)))
     if not candidates:
@@ -191,6 +192,62 @@ def try_overlay_quantum():
     except Exception as e:
         print("Overlay (Quantum) unavailable:", e)
 
+def try_overlay_cob():
+    if COB_JSON.exists():
+        try:
+            data = json.loads(COB_JSON.read_text())
+            if data.get("units") != "meters":
+                print("Overlay (COB) skipped: cob_layout.json not in meters")
+                return
+
+            global overlay_room_bounds
+            room = data.get("room") or {}
+            if "L" in room and "W" in room:
+                overlay_room_bounds = (float(room["L"]), float(room["W"]))
+
+            z0 = float(data.get("z_emit_m", data.get("z", 0.0)))
+
+            centers = []
+            for c in data.get("cobs", []):
+                ctr = c.get("center") or c.get("center_xyz") or c.get("center_m")
+                if not (isinstance(ctr, list) and len(ctr) >= 2):
+                    continue
+                cx = float(ctr[0]); cy = float(ctr[1]); cz = float(ctr[2]) if len(ctr) >= 3 else z0
+                centers.append((cx, cy, cz))
+
+            polys = []
+            for s in data.get("strip_segments", []):
+                corners = s.get("corners_xy") or s.get("corners")
+                if not (isinstance(corners, list) and len(corners) >= 4):
+                    continue
+                try:
+                    xy = [(float(p[0]), float(p[1])) for p in corners[:4]]
+                except Exception:
+                    continue
+                polys.append(xy)
+
+            if polys:
+                overlay_polys.append(("Perimeter strips", polys,
+                                      dict(edgecolor='red', facecolor='none', linewidth=1.2, alpha=0.95)))
+            if centers:
+                overlay_points.append(("COB centers", centers,
+                                       dict(marker='o', s=10, color='white', linewidths=0.6)))
+
+            print(f"Overlay: COB from JSON ({len(centers)} COBs, {len(polys)} strip segments)")
+            return
+        except Exception as e:
+            print("Overlay (COB) JSON read failed; falling back to module:", e)
+
+    try:
+        gc = importlib.import_module("generate_emitters_cob")
+        positions = gc.get_module_positions()[0]
+        pts = [(p["x"], p["y"], p.get("z", 0.0)) for p in positions]
+        overlay_points.append(("COB centers", pts,
+                               dict(marker='o', s=10, color='white', linewidths=0.6)))
+        print(f"Overlay: {len(pts)} COB centers (from module)")
+    except Exception as e:
+        print("Overlay (COB) unavailable:", e)
+
 if args.overlay == "auto":
     mode = auto_pick_overlay_mode()
     if mode == "smd":
@@ -199,12 +256,16 @@ if args.overlay == "auto":
         try_overlay_spydr3()
     elif mode == "quantum":
         try_overlay_quantum()
+    elif mode == "cob":
+        try_overlay_cob()
 elif args.overlay == "smd":
     try_overlay_smd()
 elif args.overlay == "spydr3":
     try_overlay_spydr3()
 elif args.overlay == "quantum":
     try_overlay_quantum()
+elif args.overlay == "cob":
+    try_overlay_cob()
 elif args.overlay == "both":
     try_overlay_smd(); try_overlay_spydr3()
 # else: none

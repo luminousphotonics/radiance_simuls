@@ -141,3 +141,131 @@ if [[ "${SYM:-1}" = "1" ]]; then
     ${AXES_ONLY:+--axes-only} \
     --verbose
 fi
+
+# Log "usable photons under a PPFD ceiling" metrics.
+# Set SETPOINT_PPFD (or TARGET_PPFD) to treat that as the canopy PPFD cap.
+if [[ "${LOG_CAP_METRICS:-1}" = "1" ]]; then
+  CAP_PPFD="${SETPOINT_PPFD:-${TARGET_PPFD:-}}"
+  CAP_PPFD="$CAP_PPFD" "${PY:-python3}" - <<'PY'
+import os
+import numpy as np
+
+from ppfd_metrics import compute_ppfd_metrics, format_ppfd_metrics_line
+
+root = os.environ.get("ROOT", ".")
+ppfd_path = os.path.join(root, "ppfd_map.txt")
+
+def load_ppfd(path: str) -> np.ndarray:
+    vals = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 4:
+                continue
+            vals.append(float(parts[3]))
+    if not vals:
+        raise SystemExit(f"No PPFD values found in {path}")
+    return np.asarray(vals, dtype=float)
+
+data = load_ppfd(ppfd_path)
+
+cap_raw = os.environ.get("CAP_PPFD", "")
+cap = float(cap_raw) if cap_raw else None
+
+# total input watts (at current dimmer), optional
+watts = None
+watts_raw = os.environ.get("TOTAL_INPUT_WATTS", "").strip()
+try:
+    watts = float(watts_raw) if watts_raw else None
+except ValueError:
+    watts = None
+if watts is None:
+    # Try to parse from ies_sources/smd_summary.txt
+    try:
+        summ_path = os.path.join(os.environ.get("ROOT", "."), "ies_sources", "smd_summary.txt")
+        with open(summ_path, "r", encoding="utf-8") as fh:
+            for ln in fh:
+                s = ln.strip()
+                if "total effective" in s:
+                    parts = s.replace("≈", " ").replace("W", " ").split()
+                    for tok in parts:
+                        try:
+                            watts = float(tok)
+                            break
+                        except ValueError:
+                            continue
+                    if watts is not None:
+                        break
+                if "total electrical power" in s and watts is None:
+                    parts = s.replace("≈", " ").replace("W", " ").split()
+                    for tok in parts:
+                        try:
+                            watts = float(tok)
+                            break
+                        except ValueError:
+                            continue
+    except Exception:
+        watts = None
+if watts is not None and not (watts > 0):
+    watts = None
+
+# emitted photons (PPF) at current dimmer, optional
+emitted_ppf = None
+emitted_ppf_raw = os.environ.get("TOTAL_EMITTED_PPF", "").strip()
+try:
+    emitted_ppf = float(emitted_ppf_raw) if emitted_ppf_raw else None
+except ValueError:
+    emitted_ppf = None
+if emitted_ppf is None:
+    # Try to parse from ies_sources/smd_summary.txt
+    try:
+        summ_path = os.path.join(os.environ.get("ROOT", "."), "ies_sources", "smd_summary.txt")
+        with open(summ_path, "r", encoding="utf-8") as fh:
+            for ln in fh:
+                s = ln.strip()
+                if "total photons" in s:
+                    parts = s.replace("≈", " ").replace("µmol/s", " ").replace("umol/s", " ").split()
+                    for tok in parts:
+                        try:
+                            emitted_ppf = float(tok)
+                            break
+                        except ValueError:
+                            continue
+                    if emitted_ppf is not None:
+                        break
+    except Exception:
+        emitted_ppf = None
+if emitted_ppf is not None and not (emitted_ppf > 0):
+    emitted_ppf = None
+
+area_raw = os.environ.get("CANOPY_AREA_M2", "")
+area = None
+try:
+    area = float(area_raw) if area_raw else None
+except ValueError:
+    area = None
+if area is None:
+    try:
+        L_ft = float(os.environ.get("LENGTH_FT", "").strip() or "0")
+        W_ft = float(os.environ.get("WIDTH_FT", "").strip() or "0")
+        if os.environ.get("ALIGN_LONG_AXIS_X", "").strip() == "1" and W_ft > L_ft:
+            L_ft, W_ft = W_ft, L_ft
+        if L_ft > 0 and W_ft > 0:
+            area = (L_ft * W_ft) * 0.09290304
+    except Exception:
+        area = None
+
+m = compute_ppfd_metrics(
+    data,
+    setpoint_ppfd=cap,
+    canopy_area_m2=area,
+    total_input_watts=watts,
+    emitted_ppf_umol_s=emitted_ppf,
+    legacy_metrics=True,
+)
+print("METRICS:", format_ppfd_metrics_line(m))
+PY
+fi

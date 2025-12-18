@@ -11,5 +11,20 @@
   ],
   "sensor_file": "sensor_points.txt",
   "basis_unit_w_per_module": 1.0,
-  "layout": "quantum"
+  "layout": "quantum",
+  "generator": "generate_emitters_quantum.py",
+  "generator_sha256": "8d2e2a88b6a155f30d77a02603bd2de900fb92f03ebfa23a40b80b7688cb2daa",
+  "emitter_env": {
+    "PPE_IS_SYSTEM": 1,
+    "DRIVER_EFF": 0.95,
+    "THERMAL_EFF": 0.92,
+    "BOARD_OPT_EFF": 0.95,
+    "WIRING_EFF": 0.99,
+    "EFF_SCALE": 1.0,
+    "SUBPATCH_GRID": 1,
+    "PATCH_X_M": 0.28575,
+    "PATCH_Y_M": 0.1735582,
+    "QB_EDGE_PERIM": 0,
+    "QB_PERIM_INSET_M": 0.02
+  }
 }

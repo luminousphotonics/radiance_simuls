@@ -28,8 +28,12 @@ def parse_args():
                     help="Smoothing weights to try (L2 on ring differences)")
     ap.add_argument("--lambda-r", type=float, nargs="+", default=[0.0, 1e-3, 1e-2, 1e-1],
                     help="Ridge weights to try (L2 on absolute ring powers)")
+    ap.add_argument("--ridge-weights", type=float, nargs="*", default=None,
+                    help="Optional per-variable ridge weights (len=K, or a single scalar to broadcast).")
     ap.add_argument("--lambda-mean", type=float, default=10.0,
                     help="Weight on enforcing the target mean PPFD")
+    ap.add_argument("--smooth-groups", type=int, nargs="*", default=None,
+                    help="Optional group sizes for smoothing (build D per group, e.g. '13 13' for 2 channels).")
     ap.add_argument("--use-chebyshev", action="store_true", default=False,
                     help="Also try a Chebyshev (minimax) solve to shrink max error")
     ap.add_argument("--tol-mean", type=float, default=0.005,
@@ -54,6 +58,30 @@ def build_D(K: int) -> np.ndarray:
     for i in range(K - 1):
         D[i, i] = 1.0
         D[i, i + 1] = -1.0
+    return D
+
+
+def build_D_groups(groups: list[int], K: int) -> np.ndarray:
+    """Block-diagonal D built per group (each group uses first differences)."""
+    if not groups:
+        return build_D(K)
+    if any(int(g) < 0 for g in groups):
+        raise ValueError("smooth group sizes must be non-negative")
+    if sum(groups) != K:
+        raise ValueError(f"smooth groups sum={sum(groups)} must equal K={K}")
+
+    n_rows = sum(max(0, int(g) - 1) for g in groups)
+    D = np.zeros((n_rows, K), dtype=float)
+    row0 = 0
+    col0 = 0
+    for g in groups:
+        g = int(g)
+        if g >= 2:
+            for i in range(g - 1):
+                D[row0 + i, col0 + i] = 1.0
+                D[row0 + i, col0 + i + 1] = -1.0
+            row0 += g - 1
+        col0 += g
     return D
 
 
@@ -83,6 +111,22 @@ def main():
     print("Trying lambda_r values:", lambdas_r)
     print(f"Mean weight lambda_mean={lambda_mean}")
 
+    # Optional per-variable ridge weights (defaults to 1.0 for all).
+    ridge_w = None
+    if args.ridge_weights is None or len(args.ridge_weights) == 0:
+        ridge_w = np.ones((K,), dtype=float)
+    elif len(args.ridge_weights) == 1:
+        ridge_w = np.full((K,), float(args.ridge_weights[0]), dtype=float)
+    else:
+        if len(args.ridge_weights) != K:
+            raise SystemExit(f"--ridge-weights length {len(args.ridge_weights)} must match K={K}")
+        ridge_w = np.asarray([float(x) for x in args.ridge_weights], dtype=float)
+
+    # Optional smoothing groups (defaults to full vector).
+    smooth_groups = None
+    if args.smooth_groups is not None and len(args.smooth_groups) > 0:
+        smooth_groups = [int(x) for x in args.smooth_groups]
+
     best = None  # (score, lambda_s, w, metrics)
 
     # Precompute ones vector
@@ -99,12 +143,14 @@ def main():
             aug_rhs = [target_mu * ones]
 
             if lam_s > 0.0:
-                D = build_D(K)
+                D = build_D_groups(smooth_groups, K) if smooth_groups is not None else build_D(K)
                 aug_rows.append(np.sqrt(lam_s) * D)
-                aug_rhs.append(np.zeros((K - 1,), dtype=float))
+                aug_rhs.append(np.zeros((D.shape[0],), dtype=float))
 
             if lam_r > 0.0:
-                aug_rows.append(np.sqrt(lam_r) * np.eye(K))
+                # Weighted ridge: penalize some variables more than others.
+                W = np.diag(np.sqrt(ridge_w))
+                aug_rows.append(np.sqrt(lam_r) * W)
                 aug_rhs.append(np.zeros((K,), dtype=float))
 
             if lambda_mean > 0.0:

@@ -1,0 +1,13 @@
+COB solver report:
+  ring_powers_json: /Users/austinrouse/radiance_simuls/ring_powers_cob.json
+  layout_json     : /Users/austinrouse/radiance_simuls/ies_sources/cob_layout.json
+  note: solver variables are W/COB per ring (strips are proportional to COB ring watts).
+  rings: 8 (0..7)
+    ring  0: 39.669 W/COB ×   1 =     39.7 W | strip    1.98 W (  0.00 W/m over   0.00 m)
+    ring  1: 41.139 W/COB ×   4 =    164.6 W | strip    8.23 W (  5.02 W/m over   1.64 m)
+    ring  2: 42.963 W/COB ×   8 =    343.7 W | strip   17.19 W (  4.21 W/m over   4.08 m)
+    ring  3: 36.682 W/COB ×  12 =    440.2 W | strip   22.01 W (  3.60 W/m over   6.12 m)
+    ring  4: 44.381 W/COB ×  16 =    710.1 W | strip   35.50 W (  4.35 W/m over   8.16 m)
+    ring  5: 51.753 W/COB ×  20 =   1035.1 W | strip   51.75 W (  6.34 W/m over   8.16 m)
+    ring  6:  0.000 W/COB ×  24 =      0.0 W | strip    0.00 W (  0.00 W/m over  10.20 m)
+    ring  7: 97.477 W/COB ×  28 =   2729.3 W | strip  136.47 W ( 11.15 W/m over  12.24 m)

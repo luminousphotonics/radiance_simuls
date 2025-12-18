@@ -71,12 +71,26 @@ RING_POWER_W: Dict[int, float] = {
 RING_POWERS_SOURCE = "built-in"
 
 # Global derating
+# Important: PPE_UMOL_PER_J can either represent:
+#   (A) fixture/system-level PPE (already includes driver/thermal/optical losses), or
+#   (B) LED/board-level PPE (needs additional derate multipliers applied).
+#
+# For SMD we default to (A) so PPE behaves like Quantum by default; set
+# PPE_IS_SYSTEM=0 if your PPE values are LED/board-level and you want additional
+# driver/thermal/optical/wiring derates applied.
+PPE_IS_SYSTEM = os.getenv("PPE_IS_SYSTEM", "1").strip() != "0"
+
 DRIVER_EFF     = _env_float("DRIVER_EFF",     0.95)
 THERMAL_EFF    = _env_float("THERMAL_EFF",    0.92)
 BOARD_OPT_EFF  = _env_float("BOARD_OPT_EFF",  0.95)
 WIRING_EFF     = _env_float("WIRING_EFF",     0.99)
-USER_EFF_SCALE = _env_float("EFF_SCALE",      1.00)
-DERATE = DRIVER_EFF * THERMAL_EFF * BOARD_OPT_EFF * WIRING_EFF * USER_EFF_SCALE
+USER_EFF_SCALE = _env_float("EFF_SCALE",      1.00)  # dimmer fraction (0..1)
+
+if PPE_IS_SYSTEM:
+    DERATE = USER_EFF_SCALE
+else:
+    DERATE = DRIVER_EFF * THERMAL_EFF * BOARD_OPT_EFF * WIRING_EFF * USER_EFF_SCALE
+
 EFF_SCALE = DERATE
 
 # ----------------------------------------------------------------------
@@ -729,19 +743,37 @@ def main():
     # Actual module counts per ring from the generated positions
     ring_counts = Counter(p["ring"] for p in positions)
 
-    total_w = 0.0
+    derate_desc = (
+        f"  derate      : {DERATE:.4f} (= user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+        if PPE_IS_SYSTEM
+        else
+        f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
+        f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+    )
+
+    total_w_in = 0.0
+    total_w_eff = 0.0
     lines = []
     for L in range(rings_local):
         nL = ring_counts.get(L, 0)
-        wL = RING_POWER_W.get(L, RING_POWER_W[max(RING_POWER_W.keys())]) * EFF_SCALE
-        total_w += nL * wL
-        lines.append(f"    ring {L}: {wL:5.2f} W × {nL} mods")
+        w_in = RING_POWER_W.get(L, RING_POWER_W[max(RING_POWER_W.keys())])
+        w_eff = w_in * EFF_SCALE
+        total_w_in += nL * w_in
+        total_w_eff += nL * w_eff
+        lines.append(f"    ring {L}: {w_in:5.2f} W in ({w_eff:5.2f} W eff) × {nL} mods")
 
     avg_ppe = (
         sum(COUNT_PER_MODULE[ch]*PER_LED_W[ch]*PPE_UMOL_PER_J[ch]
             for ch in COUNT_PER_MODULE)
         / max(_per_module_nominal_watts(), 1e-9)
     )
+
+    ppe_parts = []
+    for ch in sorted(COUNT_PER_MODULE.keys()):
+        if COUNT_PER_MODULE.get(ch, 0) <= 0:
+            continue
+        ppe_parts.append(f"{ch}={PPE_UMOL_PER_J[ch]:.3f}")
+    ppe_str = ", ".join(ppe_parts) if ppe_parts else "(none)"
 
     # Total photons based on actual ring counts
     total_umol = sum(
@@ -765,8 +797,12 @@ def main():
         f"  optics      : {'enabled (normalized patterns)' if use_optics else 'disabled (Lambertian)'}\n"
         f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}\n"
         f"  ring powers : {RING_POWERS_SOURCE}\n"
-        f"  per-ring watts (per module):\n" + "\n".join(lines) + "\n"
-        f"  total electrical power ≈ {total_w:.1f} W\n"
+        f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)\n"
+        + derate_desc
+        + ("  per-ring watts (per module, input → effective):\n" + "\n".join(lines) + "\n")
+        + f"  total electrical input ≈ {total_w_in:.1f} W\n"
+        + f"  total effective (derated) ≈ {total_w_eff:.1f} W\n"
+        f"  PPE by channel (µmol/J): {ppe_str}\n"
         f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s\n"
     )
 
@@ -779,7 +815,11 @@ def main():
     print(f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}")
     print(f"  ring powers : {RING_POWERS_SOURCE}")
     print("  per-ring watts (per module):"); [print(s) for s in lines]
-    print(f"  total electrical power ≈ {total_w:.1f} W")
+    print(f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)")
+    print(derate_desc.rstrip())
+    print(f"  total electrical input ≈ {total_w_in:.1f} W")
+    print(f"  total effective (derated) ≈ {total_w_eff:.1f} W")
+    print(f"  PPE by channel (µmol/J): {ppe_str}")
     print(f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s")
     print(f"✔ Wrote {out}")
     if use_optics: print(f"✔ Wrote {CAL_FILE}")

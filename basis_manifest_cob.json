@@ -1,0 +1,29 @@
+{
+  "n_points": 225,
+  "n_rings": 8,
+  "ring_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "variables": "cob_w_per_cob",
+  "cob_rings": 8,
+  "basis_unit_w_per_cob": 1.0,
+  "generator": "generate_emitters_cob.py",
+  "generator_sha256": "425054035153bec1ed28da268a7ab3df8cd56589df964a64a18d044c31dc6702",
+  "emitter_env": {
+    "EFF_SCALE": 1.0,
+    "COB_BASE_RING_N": 6,
+    "COB_PPE_UMOL_PER_J": 2.76,
+    "STRIP_PPE_UMOL_PER_J": 2.76,
+    "COB_STRIP_MODE": "proportional",
+    "COB_STRIP_MIN_RING": 1,
+    "COB_STRIP_W_FRACTION": 0.05,
+    "COB_DISK_SIDES": 16
+  }
+}

@@ -299,6 +299,17 @@ class App(tk.Tk):
         env = os.environ.copy()
         env["LENGTH_FT"] = self.length_ft.get().strip()
         env["WIDTH_FT"] = self.width_ft.get().strip()
+        # Ensure scripts can compute PPF consistently (PPF = mean_PPFD * CANOPY_AREA_M2).
+        try:
+            L_ft = float(env["LENGTH_FT"] or "0")
+            W_ft = float(env["WIDTH_FT"] or "0")
+            if self.align_long_x.get() and W_ft > L_ft:
+                L_ft, W_ft = W_ft, L_ft
+            area_m2 = (L_ft * W_ft) * 0.09290304
+            if area_m2 > 0:
+                env["CANOPY_AREA_M2"] = f"{area_m2:.6f}"
+        except Exception:
+            pass
         env["MODE"] = self.sim_mode.get()
         env["OS"] = self.os.get().strip() or "4"
         env["SUBPATCH_GRID"] = self.subgrid.get().strip() or "1"
