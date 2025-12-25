@@ -36,7 +36,12 @@ SPYDR_Z_M="${SPYDR_Z_M:-0.4572}"   # ~18 in
 NX="${NX:-1}"                       # fixture grid in room (1x1 centers at origin)
 NY="${NY:-1}"
 EFF_SCALE="${EFF_SCALE:-1.0}"       # dimmer fraction (0..1); capped at 1.0 (no overdrive)
-SPYDR_PPE_UMOL_PER_J="${SPYDR_PPE_UMOL_PER_J:-2.7}"  # for electrical watts estimate: W ≈ PPF / PPE
+SPYDR_PPE_UMOL_PER_J="${SPYDR_PPE_UMOL_PER_J:-2.76}"  # full-power PPE (µmol/J) for electrical watts estimate
+SPYDR_DROOP="${SPYDR_DROOP:-1}"     # 1=apply PPE droop vs fixture power, 0=disable
+SPYDR_W_FULL="${SPYDR_W_FULL:-800}" # W at full-power PPE
+SPYDR_PPE_FULL="${SPYDR_PPE_FULL:-$SPYDR_PPE_UMOL_PER_J}"
+SPYDR_W_LOW="${SPYDR_W_LOW:-390}"   # W at low-power PPE
+SPYDR_PPE_LOW="${SPYDR_PPE_LOW:-3.0}"
 
 clamp_0_1() {
   LC_NUMERIC=C awk -v x="$1" 'BEGIN{
@@ -61,9 +66,9 @@ mkdir -p "$ROOT/.radcache"
 
 # 1) Build room.rad for current LENGTH/WIDTH and regenerate sensor grid to match
 "$PY" "$ROOT/generate_room.py" > "$ROOM"
-# Use the bar width as MODULE_SIDE_M so the sensor grid matches the SPYDR footprint
-MODULE_SIDE_M_VAL="$("$PY" -c 'import os; w_in=float(os.getenv("SPYDR_BAR_WIDTH_IN","3")); print(w_in*0.0254)')"
-MODULE_SIDE_M="$MODULE_SIDE_M_VAL" "$PY" "$ROOT/generate_grid.py" rtrace > "$SENSORS"
+# Match COB: sample the full grow space footprint with a tiny wall inset.
+GRID_WALL_MARGIN_M="${GRID_WALL_MARGIN_M:-0.005}"
+WALL_MARGIN_M="$GRID_WALL_MARGIN_M" MODULE_SIDE_M="0.0" "$PY" "$ROOT/generate_grid.py" rtrace > "$SENSORS"
 
 # 2) Sanity
 [[ -f "$ROOM" ]] || { echo "ERROR: $ROOM not found."; exit 1; }
@@ -95,6 +100,31 @@ spy_total_watts() {
   LC_NUMERIC=C awk -v ppf="$1" -v ppe="$2" 'BEGIN{
     if (!(ppe>0)) { print("nan"); exit 0 }
     printf("%.1f\n", ppf/ppe)
+  }'
+}
+
+spy_droop_k() {
+  LC_NUMERIC=C awk -v ppe_full="$1" -v ppe_low="$2" -v w_full="$3" -v w_low="$4" 'BEGIN{
+    if (!(ppe_full>0) || !(ppe_low>0) || !(w_full>0) || !(w_low>0)) { print("0.0"); exit 0 }
+    if (w_full==w_low) { print("0.0"); exit 0 }
+    k = log(ppe_low/ppe_full) / -log(w_low/w_full)
+    if (k!=k) k=0.0
+    printf("%.6f\n", k)
+  }'
+}
+
+spy_ppe_for_eff() {
+  local eff="$1"
+  local k="$2"
+  LC_NUMERIC=C awk -v ppe_full="$SPYDR_PPE_FULL" -v w_full="$SPYDR_W_FULL" -v eff="$eff" -v k="$k" 'BEGIN{
+    if (!(ppe_full>0) || !(w_full>0)) { print("nan"); exit 0 }
+    p = w_full * eff
+    x = p / w_full
+    if (x < 0.05) x = 0.05
+    if (x > 1.2) x = 1.2
+    ppe = ppe_full * (x ** (-k))
+    if (ppe!=ppe) ppe = ppe_full
+    printf("%.6f\n", ppe)
   }'
 }
 
@@ -241,7 +271,13 @@ rm -f "$PASS1"
 
 FIXTURES=$(( NX * NY ))
 FINAL_TOTAL_PPF="$(LC_NUMERIC=C awk -v ppf="$SPYDR_PPF" -v n="$FIXTURES" -v e="$FINAL_EFF_SCALE" 'BEGIN{printf("%.2f", ppf*n*e)}')"
-FINAL_TOTAL_W="$(spy_total_watts "$FINAL_TOTAL_PPF" "$SPYDR_PPE_UMOL_PER_J")"
+SPYDR_DROOP_K="0.0"
+SPYDR_PPE_EFFECTIVE="$SPYDR_PPE_UMOL_PER_J"
+if [[ "$SPYDR_DROOP" = "1" ]]; then
+  SPYDR_DROOP_K="$(spy_droop_k "$SPYDR_PPE_FULL" "$SPYDR_PPE_LOW" "$SPYDR_W_FULL" "$SPYDR_W_LOW")"
+  SPYDR_PPE_EFFECTIVE="$(spy_ppe_for_eff "$FINAL_EFF_SCALE" "$SPYDR_DROOP_K")"
+fi
+FINAL_TOTAL_W="$(spy_total_watts "$FINAL_TOTAL_PPF" "$SPYDR_PPE_EFFECTIVE")"
 echo "Final SPYDR output:"
 echo "  fixtures=$FIXTURES (NX=$NX, NY=$NY)"
 echo "  PPF/fixture=${SPYDR_PPF} µmol/s  dimmer(EFF_SCALE)=${FINAL_EFF_SCALE}"
@@ -249,8 +285,28 @@ echo "  total PPF ≈ ${FINAL_TOTAL_PPF} µmol/s"
 if [[ "$FINAL_TOTAL_W" = "nan" ]]; then
   echo "  total electrical power: (set SPYDR_PPE_UMOL_PER_J > 0 to estimate)"
 else
-  echo "  total electrical power ≈ ${FINAL_TOTAL_W} W  (assumed PPE=${SPYDR_PPE_UMOL_PER_J} µmol/J)"
+  if [[ "$SPYDR_DROOP" = "1" ]]; then
+    echo "  droop: PPE_full=${SPYDR_PPE_FULL} at ${SPYDR_W_FULL} W, PPE_low=${SPYDR_PPE_LOW} at ${SPYDR_W_LOW} W, K=${SPYDR_DROOP_K}"
+    echo "  total electrical power ≈ ${FINAL_TOTAL_W} W  (effective PPE=${SPYDR_PPE_EFFECTIVE} µmol/J)"
+  else
+    echo "  total electrical power ≈ ${FINAL_TOTAL_W} W  (assumed PPE=${SPYDR_PPE_UMOL_PER_J} µmol/J)"
+  fi
 fi
+
+# Save effective PPE for GUI/metrics consumption
+POWER_META="$OUTDIR/spydr3_power.txt"
+{
+  echo "ppe_effective=${SPYDR_PPE_EFFECTIVE}"
+  echo "ppe_full=${SPYDR_PPE_FULL}"
+  echo "ppe_low=${SPYDR_PPE_LOW}"
+  echo "w_full=${SPYDR_W_FULL}"
+  echo "w_low=${SPYDR_W_LOW}"
+  echo "droop_k=${SPYDR_DROOP_K}"
+  echo "eff_scale=${FINAL_EFF_SCALE}"
+  echo "total_ppf=${FINAL_TOTAL_PPF}"
+  echo "total_w=${FINAL_TOTAL_W}"
+  echo "droop_enabled=${SPYDR_DROOP}"
+} > "$POWER_META"
 
 # Log "usable photons under a PPFD ceiling" metrics.
 # Set SETPOINT_PPFD (or TARGET_PPFD) to treat that as the canopy PPFD cap.

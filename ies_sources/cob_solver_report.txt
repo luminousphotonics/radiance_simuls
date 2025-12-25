@@ -1,13 +1,13 @@
 COB solver report:
   ring_powers_json: /Users/austinrouse/radiance_simuls/ring_powers_cob.json
   layout_json     : /Users/austinrouse/radiance_simuls/ies_sources/cob_layout.json
-  note: solver variables are W/COB per ring (strips are proportional to COB ring watts).
+  note: solver variables are W/COB per ring (halos are proportional to COB ring watts).
   rings: 8 (0..7)
-    ring  0: 39.669 W/COB ×   1 =     39.7 W | strip    1.98 W (  0.00 W/m over   0.00 m)
-    ring  1: 41.139 W/COB ×   4 =    164.6 W | strip    8.23 W (  5.02 W/m over   1.64 m)
-    ring  2: 42.963 W/COB ×   8 =    343.7 W | strip   17.19 W (  4.21 W/m over   4.08 m)
-    ring  3: 36.682 W/COB ×  12 =    440.2 W | strip   22.01 W (  3.60 W/m over   6.12 m)
-    ring  4: 44.381 W/COB ×  16 =    710.1 W | strip   35.50 W (  4.35 W/m over   8.16 m)
-    ring  5: 51.753 W/COB ×  20 =   1035.1 W | strip   51.75 W (  6.34 W/m over   8.16 m)
-    ring  6:  0.000 W/COB ×  24 =      0.0 W | strip    0.00 W (  0.00 W/m over  10.20 m)
-    ring  7: 97.477 W/COB ×  28 =   2729.3 W | strip  136.47 W ( 11.15 W/m over  12.24 m)
+    ring  0: 17.431 W/COB ×  15 =    261.5 W | halo   29.02 W (  3.54 W/m over   8.19 m)
+    ring  1: 60.297 W/COB ×  32 =   1929.5 W | halo  214.17 W ( 12.26 W/m over  17.48 m)
+    ring  2: 15.380 W/COB ×  36 =    553.7 W | halo   61.46 W (  3.13 W/m over  19.66 m)
+    ring  3: 58.141 W/COB ×  40 =   2325.6 W | halo  258.15 W ( 11.82 W/m over  21.84 m)
+    ring  4: 19.524 W/COB ×  44 =    859.1 W | halo   95.36 W (  3.97 W/m over  24.03 m)
+    ring  5: 58.782 W/COB ×  48 =   2821.5 W | halo  313.19 W ( 11.95 W/m over  26.21 m)
+    ring  6:  0.000 W/COB ×  52 =      0.0 W | halo    0.00 W (  0.00 W/m over  28.40 m)
+    ring  7: 90.508 W/COB ×  56 =   5068.4 W | halo  562.60 W ( 18.40 W/m over  30.58 m)

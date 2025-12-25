@@ -1,20 +1,20 @@
 Quantum Board emitter summary:
   rings       : 6  (center=ring 0)
-  modules     : 61
-  spacing     : 0.3372 m (outer margin 0.000 m)
+  modules     : 127
+  spacing     : 0.3484 m (outer margin 0.000 m)
   patch_x/y   : 285.8 mm × 173.6 mm
   subgrid     : 1x1
   ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_quantum.json
   PPE_IS_SYSTEM: 1  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)
   derate      : 1.0000 (= user_scale(EFF_SCALE env) 1.000)
   per-ring watts (per module, input → effective):
-    ring 0:  81.43 W in ( 81.43 W eff) × 1 boards
-    ring 1:  80.43 W in ( 80.43 W eff) × 4 boards
-    ring 2:  82.39 W in ( 82.39 W eff) × 8 boards
-    ring 3:  79.90 W in ( 79.90 W eff) × 12 boards
-    ring 4:  81.34 W in ( 81.34 W eff) × 16 boards
-    ring 5:  98.85 W in ( 98.85 W eff) × 20 boards
-  total electrical input ≈ 5299.5 W
-  total effective (derated) ≈ 5299.5 W
+    ring 0:  77.27 W in ( 77.27 W eff) × 7 boards
+    ring 1:  79.71 W in ( 79.71 W eff) × 16 boards
+    ring 2:  79.18 W in ( 79.18 W eff) × 20 boards
+    ring 3:  77.78 W in ( 77.78 W eff) × 24 boards
+    ring 4:  77.30 W in ( 77.30 W eff) × 28 boards
+    ring 5:  94.71 W in ( 94.71 W eff) × 32 boards
+  total electrical input ≈ 10461.6 W
+  total effective (derated) ≈ 10461.6 W
   PPE by channel (µmol/J): CW=2.760, R=2.760, WW=2.760
-  avg PPE (mix) ≈ 2.760 µmol/J → total photons ≈ 14627 µmol/s
+  avg PPE (mix) ≈ 2.760 µmol/J → total photons ≈ 28874 µmol/s

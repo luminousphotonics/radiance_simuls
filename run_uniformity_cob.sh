@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # run_uniformity_cob.sh
-# Uniformity solver pipeline for the COB + strip layout (independent of SMD/Quantum).
+# Uniformity solver pipeline for the COB + halo layout (independent of SMD/Quantum).
 
 set -euo pipefail
 
@@ -84,19 +84,44 @@ if have_sha and have_sha != want_sha:
 
 have_env = manifest.get("emitter_env") or {}
 want_env = {
+    "LENGTH_FT": float(os.environ.get("LENGTH_FT", "0.0")),
+    "WIDTH_FT": float(os.environ.get("WIDTH_FT", "0.0")),
+    "LENGTH_M": float(os.environ.get("LENGTH_M", "0.0")),
+    "WIDTH_M": float(os.environ.get("WIDTH_M", "0.0")),
+    "HEIGHT_M": float(os.environ.get("HEIGHT_M", "0.0")),
+    "MARGIN_IN": float(os.environ.get("MARGIN_IN", "0.0")),
+    "MOUNT_Z_M": float(os.environ.get("MOUNT_Z_M", "0.0")),
+    "ALIGN_LONG_AXIS_X": int(os.environ.get("ALIGN_LONG_AXIS_X", "1")),
+    "GRID_WALL_MARGIN_M": float(os.environ.get("GRID_WALL_MARGIN_M", "0.005")),
+    "MODULE_SIDE_M": float(os.environ.get("MODULE_SIDE_M", "0.0")),
     "EFF_SCALE": float(os.environ.get("EFF_SCALE", "1.0")),
+    "LAYOUT_MODE": os.environ.get("LAYOUT_MODE", "square"),
+    "COB_RECT_AUTO": int(os.environ.get("COB_RECT_AUTO", "1")),
     "COB_BASE_RING_N": int(os.environ.get("COB_BASE_RING_N", "6")),
+    "COB_WALL_CLEARANCE_IN": float(os.environ.get("COB_WALL_CLEARANCE_IN", "3.0")),
+    "COB_WALL_CLEARANCE_M": float(os.environ.get("COB_WALL_CLEARANCE_M", "0.0")),
+    "COB_EDGE_GUARD_M": float(os.environ.get("COB_EDGE_GUARD_M", "0.0")),
+    "COB_EDGE_GUARD_FRAC": float(os.environ.get("COB_EDGE_GUARD_FRAC", "0.0")),
     "COB_PPE_UMOL_PER_J": float(os.environ.get("COB_PPE_UMOL_PER_J", "2.76")),
     "STRIP_PPE_UMOL_PER_J": float(os.environ.get("STRIP_PPE_UMOL_PER_J", "2.76")),
     "COB_STRIP_MODE": os.environ.get("COB_STRIP_MODE", "proportional"),
-    "COB_STRIP_MIN_RING": int(os.environ.get("COB_STRIP_MIN_RING", "1")),
+    "COB_STRIP_GEOM": os.environ.get("COB_STRIP_GEOM", "halo"),
+    "COB_STRIP_MIN_RING": int(os.environ.get("COB_STRIP_MIN_RING", "0")),
     "COB_STRIP_W_FRACTION": float(os.environ.get("COB_STRIP_W_FRACTION", "0.05")),
     "COB_DISK_SIDES": int(os.environ.get("COB_DISK_SIDES", "16")),
+    "COB_HEATSINK_DIAM_IN": float(os.environ.get("COB_HEATSINK_DIAM_IN", "5.0")),
+    "COB_HALO_BAR_IN": float(os.environ.get("COB_HALO_BAR_IN", "0.1875")),
+    "COB_HALO_BAR_M": float(os.environ.get("COB_HALO_BAR_M", "0.0")),
+    "COB_OPTICS": os.environ.get("COB_OPTICS", "outer"),
+    "COB_OPTICS_RINGS": os.environ.get("COB_OPTICS_RINGS", ""),
+    "COB_OPTICS_KIND": os.environ.get("COB_OPTICS_KIND", "sym"),
+    "COB_OPTICS_FWHM_DEG": float(os.environ.get("COB_OPTICS_FWHM_DEG", "60.0")),
 }
 
+missing = [k for k in want_env.keys() if k not in have_env]
+if missing:
+    raise SystemExit("basis env missing keys: " + ", ".join(sorted(missing)))
 for k, v in want_env.items():
-    if k not in have_env:
-        continue
     if have_env[k] != v:
         raise SystemExit(f"basis env changed: {k} {have_env[k]} -> {v}")
 PY
@@ -188,7 +213,7 @@ lines = []
 lines.append("COB solver report:")
 lines.append(f"  ring_powers_json: {out_json.resolve() if out_json.exists() else out_json}")
 lines.append(f"  layout_json     : {layout.resolve() if layout.exists() else '(missing)'}")
-lines.append("  note: solver variables are W/COB per ring (strips are proportional to COB ring watts).")
+lines.append("  note: solver variables are W/COB per ring (halos are proportional to COB ring watts).")
 
 if not w:
     lines.append("  (no ring powers in JSON yet)")
@@ -202,7 +227,7 @@ else:
         wpm = (sw / ln) if ln > 1e-12 else 0.0
         lines.append(
             f"    ring {L:2d}: {wpc:6.3f} W/COB × {n:3d} = {total:8.1f} W | "
-            f"strip {sw:7.2f} W ({wpm:6.2f} W/m over {ln:6.2f} m)"
+            f"halo {sw:7.2f} W ({wpm:6.2f} W/m over {ln:6.2f} m)"
         )
 
 report.write_text("\n".join(lines).rstrip() + "\n")

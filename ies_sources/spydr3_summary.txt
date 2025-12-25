@@ -1,4 +1,4 @@
 SPYDR 3 3h47
-fixtures=6  bars/fixture=6
+fixtures=9  bars/fixture=6
 PPF/fixture=2200 umol/s  PPF_IS_SYSTEM=1  derate(EFF_SCALE)=1.000
-TOTAL PPF ≈ 13200 umol/s
+TOTAL PPF ≈ 19800 umol/s

@@ -1,3 +1,5 @@
+/archive/
+
 # Ignore the virtual environment
 venv/
 .venv/

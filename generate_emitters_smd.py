@@ -29,6 +29,12 @@ def _env_int(name: str, default: int) -> int:
         return int(default)
     return int(v)
 
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None or str(v).strip() == "":
+        return bool(default)
+    return str(v).strip().lower() not in ("0", "false", "no", "off", "")
+
 # Room (feet/inches) → meters
 LENGTH_M      = _env_float("LENGTH_FT", 12.0) * 0.3048
 WIDTH_M       = _env_float("WIDTH_FT",  12.0) * 0.3048
@@ -38,30 +44,52 @@ WALL_MARGIN_M = _env_float("MARGIN_IN", 0.0)  * 0.0254
 # Rings: RING_N = n (outer index), RINGS = n+1 (0..n)
 RING_N        = _env_int("SMD_RING_N", 7)                # GUI sets this directly or via density → ring count
 RINGS         = max(1, RING_N + 1)
+SMD_BASE_RING_N = _env_int("SMD_BASE_RING_N", 7)
 
 # Mount height (keep as-is for your scene)
 MOUNT_Z_M     = _env_float("MOUNT_Z_M", 0.4572)          # 18 in
 
 # Macro patch footprint (meters)
-MODULE_SIDE_M = _env_float("MODULE_SIDE_M", 0.12)        # board side (120 mm)
+MODULE_SIDE_M = _env_float("MODULE_SIDE_M", 0.127)       # board side (5 in / 127 mm)
 PATCH_SIDE_M  = MODULE_SIDE_M
 SUBPATCH_GRID = _env_int("SUBPATCH_GRID", 3)             # subdiv to distribute emission over board
+SMD_FIXTURE_ANGLE_IN = _env_float("SMD_FIXTURE_ANGLE_IN", 0.125)
+SMD_FIXTURE_ANGLE_M = float(SMD_FIXTURE_ANGLE_IN) * 0.0254
 
 # Layout mode: 'square' (current) or 'rect_rect' (rectangular rings)
 LAYOUT_MODE = os.getenv("LAYOUT_MODE", "square").strip().lower()
+SMD_PERIM_GAP_FILL = _env_bool("SMD_PERIM_GAP_FILL", False)
+SMD_OUTER_PER_MODULE = _env_bool("SMD_OUTER_PER_MODULE", False)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Electrical / spectral model
 # ──────────────────────────────────────────────────────────────────────────────
 COUNT_PER_MODULE: Dict[str, int] = {
-    "WW": 32, "CW": 32, "R": 20, "B": 12, "FR": 8, "C": 4, "UV": 6,
+    "WW": 54,   # 3000K
+    "CW": 55,   # 5000K
+    "R":  36,   # 660nm
+    "B":  0,
+    "FR": 0,
+    "C":  0,
+    "UV": 0,
 }
+
 PER_LED_W: Dict[str, float] = {
-    "WW": 0.60, "CW": 0.60, "R": 0.45, "B": 0.35, "C": 0.35, "FR": 0.35, "UV": 0.25,
+    "WW": 0.76,
+    "CW": 0.76,
+    "R":  0.46,
+    "B":  0.0, "FR": 0.0, "C": 0.0, "UV": 0.0,
 }
+
+
 PPE_UMOL_PER_J: Dict[str, float] = {
-    "WW": 3.35, "CW": 3.35, "R": 4.6, "B": 2.4, "C": 2.0, "FR": 3.6, "UV": 1.0,
+    "WW": 3.00,
+    "CW": 3.05,
+    "R":  3.90,
+    "B":  0.0, "FR": 0.0, "C": 0.0, "UV": 0.0,
 }
+
+
 
 # Per-ring electrical watts (per module). Unknown outer rings clamp to last known.
 RING_POWER_W: Dict[int, float] = {
@@ -75,16 +103,18 @@ RING_POWERS_SOURCE = "built-in"
 #   (A) fixture/system-level PPE (already includes driver/thermal/optical losses), or
 #   (B) LED/board-level PPE (needs additional derate multipliers applied).
 #
-# For SMD we default to (A) so PPE behaves like Quantum by default; set
-# PPE_IS_SYSTEM=0 if your PPE values are LED/board-level and you want additional
-# driver/thermal/optical/wiring derates applied.
-PPE_IS_SYSTEM = os.getenv("PPE_IS_SYSTEM", "1").strip() != "0"
+# For SMD we default to (B) so PPE is board-level by default; set
+# PPE_IS_SYSTEM=1 if your PPE values are already system-level.
+PPE_IS_SYSTEM = os.getenv("PPE_IS_SYSTEM", "0").strip() != "0"
 
-DRIVER_EFF     = _env_float("DRIVER_EFF",     0.95)
-THERMAL_EFF    = _env_float("THERMAL_EFF",    0.92)
-BOARD_OPT_EFF  = _env_float("BOARD_OPT_EFF",  0.95)
+DRIVER_EFF     = _env_float("DRIVER_EFF",     0.96)
+THERMAL_EFF    = _env_float("THERMAL_EFF",    1.00)
+BOARD_OPT_EFF  = _env_float("BOARD_OPT_EFF",  0.90)
 WIRING_EFF     = _env_float("WIRING_EFF",     0.99)
 USER_EFF_SCALE = _env_float("EFF_SCALE",      1.00)  # dimmer fraction (0..1)
+DROOP_P_NOM    = _env_float("DROOP_P_NOM",    100.0)
+DROOP_K        = _env_float("DROOP_K",        0.12)
+DROOP_SCALE    = 1.0
 
 if PPE_IS_SYSTEM:
     DERATE = USER_EFF_SCALE
@@ -103,15 +133,24 @@ EFF_SCALE = DERATE
 BASIS_MODE      = os.getenv("SMD_BASIS_MODE", "0") == "1"
 BASIS_RING      = int(os.getenv("SMD_BASIS_RING", "-1"))
 BASIS_UNIT_W    = float(os.getenv("SMD_BASIS_UNIT_W", "1.0"))
+BASIS_OUTER_MODULE_IDX = int(os.getenv("SMD_BASIS_OUTER_MODULE_IDX", "-1"))
+
+PER_MODULE_OUTER_INDICES: List[int] = []
+PER_MODULE_OUTER_POWERS: List[float] = []
+OUTER_RING_INDEX_JSON: int | None = None
 
 if BASIS_MODE:
-    if BASIS_RING >= 0:
+    if BASIS_RING >= 0 and BASIS_OUTER_MODULE_IDX < 0:
         for L in range(RINGS):
             if L == BASIS_RING:
                 RING_POWER_W[L] = BASIS_UNIT_W
             else:
                 RING_POWER_W[L] = 0.0
         RING_POWERS_SOURCE = f"basis_mode_ring_{BASIS_RING}"
+    elif BASIS_OUTER_MODULE_IDX >= 0:
+        for L in range(RINGS):
+            RING_POWER_W[L] = 0.0
+        RING_POWERS_SOURCE = f"basis_mode_outer_idx_{BASIS_OUTER_MODULE_IDX}"
 
 
 def _apply_ring_powers_override():
@@ -119,7 +158,7 @@ def _apply_ring_powers_override():
     If USE_RING_POWERS_JSON=1 and a JSON file is available (default: ring_powers_optimized.json),
     override RING_POWER_W entries accordingly. Skipped when BASIS_MODE=1.
     """
-    global RING_POWERS_SOURCE
+    global RING_POWERS_SOURCE, PER_MODULE_OUTER_INDICES, PER_MODULE_OUTER_POWERS, OUTER_RING_INDEX_JSON
     if BASIS_MODE:
         return
     use_json = os.getenv("USE_RING_POWERS_JSON", "1") != "0"
@@ -143,6 +182,19 @@ def _apply_ring_powers_override():
                 RING_POWER_W[int(k)] = float(v)
             except Exception:
                 continue
+
+        outer_idxs = data.get("outer_ring_indices") or []
+        outer_ws = data.get("outer_ring_powers_W_per_module") or data.get("outer_ring_powers")
+        outer_ring_idx = data.get("outer_ring_index")
+        if isinstance(outer_ring_idx, int):
+            OUTER_RING_INDEX_JSON = int(outer_ring_idx)
+        if outer_idxs and outer_ws and len(outer_idxs) == len(outer_ws):
+            try:
+                PER_MODULE_OUTER_INDICES = [int(x) for x in list(outer_idxs)]
+                PER_MODULE_OUTER_POWERS = [float(x) for x in list(outer_ws)]
+            except Exception:
+                PER_MODULE_OUTER_INDICES = []
+                PER_MODULE_OUTER_POWERS = []
         RING_POWERS_SOURCE = f"json:{path}"
         print(f"Applied ring powers from {path}")
     except Exception as e:
@@ -155,6 +207,8 @@ _apply_ring_powers_override()
 # Optics (lens patterns)
 # ──────────────────────────────────────────────────────────────────────────────
 OPTICS_MODE = os.getenv("OPTICS", "lens").lower()  # "lens" or "none"
+SMD_OUTER_OPTICS = _env_bool("SMD_OUTER_OPTICS", False)
+SMD_OUTER_FWHM_DEG = _env_float("SMD_OUTER_FWHM_DEG", 40.0)
 LENS_RINGS = {
     1: ("bat", {"fwhm": 51.0, "bat_k": 0.75}),
     2: ("bat", {"fwhm": 47.0, "bat_k": 0.75}),
@@ -243,6 +297,196 @@ def _ij_to_xy(i: int, j: int, spacing: float) -> Tuple[float,float]:
     return ((i - j) * spacing / SQRT2, (i + j) * spacing / SQRT2)
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Perimeter gap fill helper (remove inner ring, densify outer ring)
+# ──────────────────────────────────────────────────────────────────────────────
+def _apply_perimeter_gap_fill(positions: List[dict]) -> Tuple[List[dict], dict]:
+    if not positions:
+        return positions, {}
+
+    ring_max = max(int(p.get("ring", 0)) for p in positions)
+    if ring_max <= 0:
+        return positions, {}
+
+    outer = [p for p in positions if int(p.get("ring", 0)) == ring_max]
+    if not outer:
+        return positions, {}
+
+    # Center from all positions (layout is already centered, but keep robust)
+    cx = sum(float(p.get("x", 0.0)) for p in positions) / max(1, len(positions))
+    cy = sum(float(p.get("y", 0.0)) for p in positions) / max(1, len(positions))
+
+    def _ang(p: dict) -> float:
+        return math.atan2(float(p.get("y", 0.0)) - cy, float(p.get("x", 0.0)) - cx)
+
+    # Remove the ring just inside the perimeter:
+    # - For axis-aligned rectangles, drop only the left/right sides to make room for denser edges.
+    # - For non-rect layouts, drop the entire inner ring.
+    inner_ring = ring_max - 1
+    existing = {(round(float(p.get("x", 0.0)), 6), round(float(p.get("y", 0.0)), 6)) for p in positions}
+    added = 0
+
+    xs = sorted({round(float(p.get("x", 0.0)), 6) for p in outer})
+    ys = sorted({round(float(p.get("y", 0.0)), 6) for p in outer})
+    dxs = [xs[i + 1] - xs[i] for i in range(len(xs) - 1) if xs[i + 1] - xs[i] > 1e-6]
+    dys = [ys[i + 1] - ys[i] for i in range(len(ys) - 1) if ys[i + 1] - ys[i] > 1e-6]
+    def _min_step(vals: List[float], min_tol: float = 1e-4) -> float:
+        diffs = [vals[i + 1] - vals[i] for i in range(len(vals) - 1) if vals[i + 1] - vals[i] > min_tol]
+        return min(diffs) if diffs else 0.0
+
+    min_step = min([s for s in (_min_step(xs), _min_step(ys)) if s > 0.0], default=0.0)
+    tol = max(1e-4, min_step * 0.3) if min_step > 0 else 1e-4
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+
+    left = [p for p in outer if abs(float(p.get("x", 0.0)) - x_min) <= tol]
+    right = [p for p in outer if abs(float(p.get("x", 0.0)) - x_max) <= tol]
+    bottom = [p for p in outer if abs(float(p.get("y", 0.0)) - y_min) <= tol]
+    top = [p for p in outer if abs(float(p.get("y", 0.0)) - y_max) <= tol]
+
+    axis_aligned = bool(left and right and top and bottom)
+
+    if axis_aligned:
+        kept = []
+        for p in positions:
+            if int(p.get("ring", 0)) != inner_ring:
+                kept.append(p)
+                continue
+            x = float(p.get("x", 0.0))
+            if abs(x - x_min) <= tol or abs(x - x_max) <= tol:
+                continue
+            kept.append(p)
+    else:
+        kept = [p for p in positions if int(p.get("ring", 0)) != inner_ring]
+
+    existing = {(round(float(p.get("x", 0.0)), 6), round(float(p.get("y", 0.0)), 6)) for p in kept}
+
+    def _add_midpoints_edge(points: List[dict], axis: str):
+        nonlocal added
+        if len(points) < 2:
+            return
+        if axis == "x":
+            pts = sorted(points, key=lambda p: float(p.get("y", 0.0)))
+            for a, b in zip(pts, pts[1:]):
+                mx = float(a.get("x", 0.0))
+                my = 0.5 * (float(a.get("y", 0.0)) + float(b.get("y", 0.0)))
+                key = (round(mx, 6), round(my, 6))
+                if key in existing:
+                    continue
+                kept.append({
+                    "ring": ring_max,
+                    "i": float(a.get("i", 0.0)),
+                    "j": float(a.get("j", 0.0)),
+                    "x": round(mx, 6),
+                    "y": round(my, 6),
+                    "z": float(a.get("z", 0.0)),
+                })
+                existing.add(key)
+                added += 1
+        else:
+            pts = sorted(points, key=lambda p: float(p.get("x", 0.0)))
+            for a, b in zip(pts, pts[1:]):
+                mx = 0.5 * (float(a.get("x", 0.0)) + float(b.get("x", 0.0)))
+                my = float(a.get("y", 0.0))
+                key = (round(mx, 6), round(my, 6))
+                if key in existing:
+                    continue
+                kept.append({
+                    "ring": ring_max,
+                    "i": float(a.get("i", 0.0)),
+                    "j": float(a.get("j", 0.0)),
+                    "x": round(mx, 6),
+                    "y": round(my, 6),
+                    "z": float(a.get("z", 0.0)),
+                })
+                existing.add(key)
+                added += 1
+
+    if axis_aligned:
+        left_y = sorted({float(p.get("y", 0.0)) for p in left})
+        right_y = sorted({float(p.get("y", 0.0)) for p in right})
+        top_x = sorted({float(p.get("x", 0.0)) for p in top})
+        bottom_x = sorted({float(p.get("x", 0.0)) for p in bottom})
+
+        base_step_x = min([s for s in (_min_step(top_x), _min_step(bottom_x), min_step) if s > 0.0], default=0.0)
+        base_step_y = min([s for s in (_min_step(left_y), _min_step(right_y), min_step) if s > 0.0], default=0.0)
+        step_x = base_step_x * 0.5 if base_step_x > 0 else 0.0
+        step_y = base_step_y * 0.5 if base_step_y > 0 else 0.0
+
+        def _edge_range(start: float, end: float, step: float):
+            if step <= 0:
+                return
+            n = int(math.floor((end - start) / step + 1e-6))
+            for i in range(n + 1):
+                v = start + i * step
+                if v > end + 1e-6:
+                    break
+                yield v
+
+        if step_y > 0:
+            for y in _edge_range(y_min, y_max, step_y):
+                for x in (x_min, x_max):
+                    key = (round(x, 6), round(y, 6))
+                    if key not in existing:
+                        kept.append({
+                            "ring": ring_max,
+                            "i": 0.0,
+                            "j": 0.0,
+                            "x": round(x, 6),
+                            "y": round(y, 6),
+                            "z": float(outer[0].get("z", 0.0)),
+                        })
+                        existing.add(key)
+                        added += 1
+
+        if step_x > 0:
+            for x in _edge_range(x_min, x_max, step_x):
+                for y in (y_min, y_max):
+                    key = (round(x, 6), round(y, 6))
+                    if key not in existing:
+                        kept.append({
+                            "ring": ring_max,
+                            "i": 0.0,
+                            "j": 0.0,
+                            "x": round(x, 6),
+                            "y": round(y, 6),
+                            "z": float(outer[0].get("z", 0.0)),
+                        })
+                        existing.add(key)
+                        added += 1
+
+        _add_midpoints_edge(left, "x")
+        _add_midpoints_edge(right, "x")
+        _add_midpoints_edge(top, "y")
+        _add_midpoints_edge(bottom, "y")
+    else:
+        outer_sorted = sorted(outer, key=_ang)
+        if len(outer_sorted) >= 2:
+            for idx, a in enumerate(outer_sorted):
+                b = outer_sorted[(idx + 1) % len(outer_sorted)]
+                mx = 0.5 * (float(a.get("x", 0.0)) + float(b.get("x", 0.0)))
+                my = 0.5 * (float(a.get("y", 0.0)) + float(b.get("y", 0.0)))
+                key = (round(mx, 6), round(my, 6))
+                if key in existing:
+                    continue
+                kept.append({
+                    "ring": ring_max,
+                    "i": float(a.get("i", 0.0)),
+                    "j": float(a.get("j", 0.0)),
+                    "x": round(mx, 6),
+                    "y": round(my, 6),
+                    "z": float(a.get("z", 0.0)),
+                })
+                existing.add(key)
+                added += 1
+
+    info = {
+        "perim_gap_fill": True,
+        "perim_gap_fill_removed_ring": int(inner_ring),
+        "perim_gap_fill_added": int(added),
+    }
+    return kept, info
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Public API for overlay/GUI
 # ──────────────────────────────────────────────────────────────────────────────
 def read_smd_layout_json() -> Tuple[List[dict], float]:
@@ -268,16 +512,17 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
     layout_mode = os.environ.get("LAYOUT_MODE", LAYOUT_MODE).strip().lower()
 
     # Guard usable spans
-    usable_half_x = (L_m * 0.5) - margin_m - patch_half_m
-    usable_half_y = (W_m * 0.5) - margin_m - patch_half_m
+    fixture_guard_m = float(SMD_FIXTURE_ANGLE_M)
+    usable_half_x = (L_m * 0.5) - margin_m - patch_half_m - fixture_guard_m
+    usable_half_y = (W_m * 0.5) - margin_m - patch_half_m - fixture_guard_m
     if usable_half_x <= 0 or usable_half_y <= 0:
         raise SystemExit("ERROR: negative/zero usable half-span; check margin/patch/room.")
 
     # Square layouts: diamond rings, center singleton, axis spacing pinned to 12'x12'
     if layout_mode == "square":
         base_short_m = 3.6576
-        base_ring_n = 7
-        base_pitch_axis = (base_short_m / 2.0 - margin_m - patch_half_m) * 2.0 / (2 * base_ring_n)  # ≈0.2345 m
+        base_ring_n = max(1, int(SMD_BASE_RING_N))
+        base_pitch_axis = (base_short_m / 2.0 - margin_m - patch_half_m - fixture_guard_m) * 2.0 / (2 * base_ring_n)
         half_min = min(usable_half_x, usable_half_y)
         ring_n = max(1, int(math.floor(half_min / base_pitch_axis)))
         rings_local = ring_n + 1
@@ -302,6 +547,9 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
             "layout_mode": layout_mode,
             "pitch_x_m": d_axis, "pitch_y_m": d_axis, "pitch_m": d_axis,
         }
+        if SMD_PERIM_GAP_FILL:
+            pos, info = _apply_perimeter_gap_fill(pos)
+            meta.update(info)
         return pos, d_axis, meta
 
     # Rectangular layouts using rect_layout (auto scales rings/counts)
@@ -337,6 +585,9 @@ def _compute_positions_from_env() -> Tuple[List[dict], float, dict]:
             "swapped_axes": swapped_axes,
         }
         meta.update({k: v for k, v in meta_rect.items() if k not in meta})
+        if SMD_PERIM_GAP_FILL:
+            positions, info = _apply_perimeter_gap_fill(positions)
+            meta.update(info)
         return positions, spacing_eff, meta
 
     # Spacing s and axis-aligned step d_axis
@@ -485,11 +736,34 @@ def get_module_positions() -> Tuple[List[Dict], float]:
 def _per_module_nominal_watts() -> float:
     return sum(COUNT_PER_MODULE[ch] * PER_LED_W[ch] for ch in COUNT_PER_MODULE)
 
+def _thermal_eff_for_watts(w_in: float) -> float:
+    # Two-tier thermal model based on per-module input watts.
+    if PPE_IS_SYSTEM:
+        return 1.0
+    if w_in <= 0:
+        return 1.0
+    if w_in <= 70.0:
+        return 0.97
+    return 0.93
+
+def _thermal_eff_avg_for_watts(watts: list[float]) -> float:
+    if PPE_IS_SYSTEM:
+        return 1.0
+    num = 0.0
+    den = 0.0
+    for w in watts:
+        if w <= 0:
+            continue
+        den += w
+        num += w * _thermal_eff_for_watts(w)
+    return (num / den) if den > 0 else 1.0
+
 def _module_photon_flux_umol_s(ring: int) -> float:
     # clamp to last known per-ring wattage when ring beyond calibration
     base_keys = sorted(RING_POWER_W.keys())
     pw = RING_POWER_W.get(ring, RING_POWER_W[base_keys[-1]])
-    target_w = pw * EFF_SCALE
+    thermal = _thermal_eff_for_watts(pw)
+    target_w = pw * EFF_SCALE * thermal
     nom_w = _per_module_nominal_watts()
     scale = 0.0 if nom_w <= 0 else target_w / nom_w
     phi = 0.0
@@ -502,6 +776,52 @@ def _module_radiance_umol_per_sr_m2(ring: int) -> float:
     A = PATCH_SIDE_M * PATCH_SIDE_M
     phi = _module_photon_flux_umol_s(ring)
     return 0.0 if A <= 0 else phi / (A * PI)  # Lambertian baseline
+
+def _module_photon_flux_umol_s_for_w(target_w: float) -> float:
+    # target_w is input watts per module; apply EFF_SCALE to get effective.
+    nom_w = _per_module_nominal_watts()
+    thermal = _thermal_eff_for_watts(target_w)
+    scale = 0.0 if nom_w <= 0 else (target_w * EFF_SCALE * thermal) / nom_w
+    phi = 0.0
+    for ch, n in COUNT_PER_MODULE.items():
+        p_elec_ch = n * PER_LED_W[ch] * scale
+        phi += p_elec_ch * PPE_UMOL_PER_J[ch]
+    return phi
+
+def _module_radiance_umol_per_sr_m2_for_w(target_w: float) -> float:
+    A = PATCH_SIDE_M * PATCH_SIDE_M
+    phi = _module_photon_flux_umol_s_for_w(target_w)
+    return 0.0 if A <= 0 else phi / (A * PI)
+
+
+def compute_droop_scale(
+    ring_watts_per_module: list[float],
+    ring_module_counts: list[int],
+    *,
+    P_NOM: float = 100.0,
+    K: float = 0.12,
+) -> float:
+    num = 0.0
+    den = 0.0
+    for P, N in zip(ring_watts_per_module, ring_module_counts):
+        if P <= 0 or N <= 0:
+            continue
+        x = max(0.05, min(1.2, float(P) / max(P_NOM, 1e-9)))
+        scale = x ** (-K)
+        w = float(P) * float(N)
+        num += w * scale
+        den += w
+    return (num / den) if den > 0 else 1.0
+
+
+def get_ring_watts_and_counts(ring_counts: dict[int, int], rings_local: int) -> tuple[list[float], list[int]]:
+    ring_watts: list[float] = []
+    ring_mods: list[int] = []
+    fallback = RING_POWER_W.get(max(RING_POWER_W.keys()), 0.0)
+    for L in range(rings_local):
+        ring_watts.append(float(RING_POWER_W.get(L, fallback)))
+        ring_mods.append(int(ring_counts.get(L, 0)))
+    return ring_watts, ring_mods
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Optics helpers + beam.cal
@@ -643,9 +963,58 @@ def main():
     pitch_y = meta.get("pitch_y_m")
     rings_local = int(meta.get("rings", RINGS))
 
+    from collections import Counter
+    ring_counts = Counter(p["ring"] for p in positions)
+
+    outer_ring = max((int(p.get("ring", 0)) for p in positions), default=0)
+    outer_override_map = {}
+    if PER_MODULE_OUTER_INDICES and PER_MODULE_OUTER_POWERS:
+        outer_override_map = {
+            int(idx): float(w)
+            for idx, w in zip(PER_MODULE_OUTER_INDICES, PER_MODULE_OUTER_POWERS)
+        }
+
+    per_mod_w = None
+    if BASIS_MODE and BASIS_OUTER_MODULE_IDX >= 0:
+        per_mod_w = [0.0 for _ in positions]
+        if 0 <= BASIS_OUTER_MODULE_IDX < len(per_mod_w):
+            per_mod_w[BASIS_OUTER_MODULE_IDX] = float(BASIS_UNIT_W)
+    elif outer_override_map:
+        per_mod_w = []
+        fallback_ring = RING_POWER_W[max(RING_POWER_W.keys())]
+        for idx, p in enumerate(positions):
+            ring = int(p.get("ring", 0))
+            w = float(RING_POWER_W.get(ring, fallback_ring))
+            if idx in outer_override_map:
+                w = float(outer_override_map[idx])
+            per_mod_w.append(w)
+
+    per_module_mode = per_mod_w is not None
+
+    droop_scale = 1.0
+    if not per_module_mode and not BASIS_MODE:
+        ring_watts, ring_mods = get_ring_watts_and_counts(ring_counts, rings_local)
+        droop_scale = compute_droop_scale(ring_watts, ring_mods, P_NOM=DROOP_P_NOM, K=DROOP_K)
+    global DERATE, EFF_SCALE, DROOP_SCALE
+    DROOP_SCALE = float(droop_scale)
+    print(f"Droop scale: {DROOP_SCALE:.4f} (P_NOM={DROOP_P_NOM:.1f}, K={DROOP_K:.3f})")
+    if PPE_IS_SYSTEM:
+        DERATE = USER_EFF_SCALE * DROOP_SCALE
+    else:
+        DERATE = DRIVER_EFF * THERMAL_EFF * BOARD_OPT_EFF * WIRING_EFF * USER_EFF_SCALE * DROOP_SCALE
+    EFF_SCALE = DERATE
+
     # Radiance materials: lambert baseline; wrappers normalized for optics
-    rad_lambert = {L: _module_radiance_umol_per_sr_m2(L) for L in range(rings_local)}
+    if per_module_mode:
+        per_mod_rad = [_module_radiance_umol_per_sr_m2_for_w(w) for w in per_mod_w]
+        rad_lambert = {}
+    else:
+        per_mod_rad = []
+        rad_lambert = {L: _module_radiance_umol_per_sr_m2(L) for L in range(rings_local)}
     use_optics = (OPTICS_MODE == "lens")
+    lens_rings = LENS_RINGS
+    if use_optics and SMD_OUTER_OPTICS and outer_ring > 0:
+        lens_rings = {outer_ring: ("sym", {"fwhm": float(SMD_OUTER_FWHM_DEG)})}
     if use_optics:
         _write_beam_cal_base(CAL_FILE)
 
@@ -660,20 +1029,23 @@ def main():
         else:
             fh.write(f"# rings={rings_local} modules={len(positions)} spacing={spacing:.4f} m (outer margin {WALL_MARGIN_M:.3f} m)\n")
         fh.write(f"# patch side = {PATCH_SIDE_M*1e3:.1f} mm  subgrid = {SUBPATCH_GRID}x{SUBPATCH_GRID}\n")
-        fh.write(f"# optics = {'enabled (normalized patterns)' if use_optics else 'disabled (Lambertian)'}\n\n")
+        if use_optics and SMD_OUTER_OPTICS:
+            fh.write(f"# optics = outer ring only (fwhm={float(SMD_OUTER_FWHM_DEG):.1f} deg)\n\n")
+        else:
+            fh.write(f"# optics = {'enabled (normalized patterns)' if use_optics else 'disabled (Lambertian)'}\n\n")
 
         for idx, p in enumerate(positions):
             L, cx, cy, cz = int(p["ring"]), float(p["x"]), float(p["y"]), float(p["z"])
-            base_rad = rad_lambert[L]
+            base_rad = per_mod_rad[idx] if per_module_mode else rad_lambert[L]
             patt = None
 
-            if use_optics and L in LENS_RINGS and L > 0:
-                kind, cfg = LENS_RINGS[L]
+            if use_optics and L in lens_rings and L > 0:
+                kind, cfg = lens_rings[L]
                 if kind == "sym":
                     m = _m_from_fwhm(float(cfg["fwhm"]))
                     gain = 1.0 / max(_avg_sym_cos(m), EPS)
                     fname = f"f_sym_L{L}"
-                    _add_wrapper(fname, f"{gain:.9f} * pow(c, {m:.9f})")
+                    _add_wrapper(fname, f"{gain:.9f} * pwr(c, {m:.9f})")
                     patt = f"p_sym_L{L}"; _write_brightfunc_ref(fh, patt, fname)
 
                 elif kind == "bat":
@@ -681,7 +1053,7 @@ def main():
                     k = float(cfg.get("bat_k", 0.75))
                     gain = 1.0 / max(_avg_bat_cos(m, k), EPS)
                     fname = f"f_bat_L{L}"
-                    _add_wrapper(fname, f"{gain:.9f} * pow(c, {m:.9f}) * (1 + {k:.9f}*(1 - 4*c + 4*c*c))")
+                    _add_wrapper(fname, f"{gain:.9f} * pwr(c, {m:.9f}) * (1 + {k:.9f}*(1 - 4*c + 4*c*c))")
                     patt = f"p_bat_L{L}"; _write_brightfunc_ref(fh, patt, fname)
 
                 elif kind == "ellip":
@@ -738,36 +1110,75 @@ def main():
         _flush_wrappers()
 
     # Per-ring summary (count = 1 + 4L)
-    from collections import Counter
 
-    # Actual module counts per ring from the generated positions
-    ring_counts = Counter(p["ring"] for p in positions)
+    droop_desc = f" × droop {DROOP_SCALE:.3f} (P_NOM={DROOP_P_NOM:.1f}, K={DROOP_K:.3f})"
+
+    thermal_eff_avg = 1.0
+    if per_module_mode:
+        thermal_eff_avg = _thermal_eff_avg_for_watts([float(w) for w in per_mod_w])
+    else:
+        thermal_watts = []
+        for L in range(rings_local):
+            nL = ring_counts.get(L, 0)
+            w_in = RING_POWER_W.get(L, RING_POWER_W[max(RING_POWER_W.keys())])
+            thermal_watts.extend([float(w_in)] * int(nL))
+        thermal_eff_avg = _thermal_eff_avg_for_watts(thermal_watts)
 
     derate_desc = (
-        f"  derate      : {DERATE:.4f} (= user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+        f"  derate      : {DERATE:.4f} (= user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f}{droop_desc})\n"
         if PPE_IS_SYSTEM
         else
-        f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF {THERMAL_EFF:.3f} × "
-        f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f})\n"
+        f"  derate      : {DERATE:.4f} (= DRIVER_EFF {DRIVER_EFF:.3f} × THERMAL_EFF tiered(avg {thermal_eff_avg:.3f}) × "
+        f"BOARD_OPT_EFF {BOARD_OPT_EFF:.3f} × WIRING_EFF {WIRING_EFF:.3f} × user_scale(EFF_SCALE env) {USER_EFF_SCALE:.3f}{droop_desc})\n"
     )
+    if PPE_IS_SYSTEM:
+        thermal_desc = "  thermal tier: disabled (PPE_IS_SYSTEM=1)\n"
+    else:
+        thermal_desc = (
+            "  thermal tier: <=70 W/mod 0.97, >70 W/mod 0.93"
+            f" (avg {thermal_eff_avg:.3f})\n"
+        )
 
     total_w_in = 0.0
     total_w_eff = 0.0
     lines = []
-    for L in range(rings_local):
-        nL = ring_counts.get(L, 0)
-        w_in = RING_POWER_W.get(L, RING_POWER_W[max(RING_POWER_W.keys())])
-        w_eff = w_in * EFF_SCALE
-        total_w_in += nL * w_in
-        total_w_eff += nL * w_eff
-        lines.append(f"    ring {L}: {w_in:5.2f} W in ({w_eff:5.2f} W eff) × {nL} mods")
+    if per_module_mode:
+        ring_w: Dict[int, List[float]] = {L: [] for L in range(rings_local)}
+        for idx, p in enumerate(positions):
+            ring = int(p.get("ring", 0))
+            if 0 <= ring < rings_local:
+                ring_w[ring].append(float(per_mod_w[idx]))
+        for L in range(rings_local):
+            ws = ring_w.get(L, [])
+            nL = len(ws)
+            if nL > 0:
+                w_avg = float(sum(ws) / nL)
+                w_min = float(min(ws))
+                w_max = float(max(ws))
+            else:
+                w_avg = w_min = w_max = 0.0
+            w_eff_list = [w * EFF_SCALE * _thermal_eff_for_watts(w) for w in ws]
+            w_eff = float(sum(w_eff_list) / nL) if nL > 0 else 0.0
+            total_w_in += float(sum(ws))
+            total_w_eff += float(sum(w_eff_list))
+            lines.append(
+                f"    ring {L}: {w_avg:5.2f} W avg ({w_eff:5.2f} W eff) "
+                f"[min {w_min:5.2f}, max {w_max:5.2f}] × {nL} mods"
+            )
+    else:
+        for L in range(rings_local):
+            nL = ring_counts.get(L, 0)
+            w_in = RING_POWER_W.get(L, RING_POWER_W[max(RING_POWER_W.keys())])
+            w_eff = w_in * EFF_SCALE * _thermal_eff_for_watts(w_in)
+            total_w_in += nL * w_in
+            total_w_eff += nL * w_eff
+            lines.append(f"    ring {L}: {w_in:5.2f} W in ({w_eff:5.2f} W eff) × {nL} mods")
 
     avg_ppe = (
         sum(COUNT_PER_MODULE[ch]*PER_LED_W[ch]*PPE_UMOL_PER_J[ch]
             for ch in COUNT_PER_MODULE)
         / max(_per_module_nominal_watts(), 1e-9)
     )
-
     ppe_parts = []
     for ch in sorted(COUNT_PER_MODULE.keys()):
         if COUNT_PER_MODULE.get(ch, 0) <= 0:
@@ -776,10 +1187,14 @@ def main():
     ppe_str = ", ".join(ppe_parts) if ppe_parts else "(none)"
 
     # Total photons based on actual ring counts
-    total_umol = sum(
-        _module_photon_flux_umol_s(L) * ring_counts.get(L, 0)
-        for L in range(rings_local)
-    )
+    if per_module_mode:
+        total_umol = sum(_module_photon_flux_umol_s_for_w(w) for w in per_mod_w)
+    else:
+        total_umol = sum(
+            _module_photon_flux_umol_s(L) * ring_counts.get(L, 0)
+            for L in range(rings_local)
+        )
+    effective_ppe = (total_umol / total_w_in) if total_w_in > 0 else avg_ppe * EFF_SCALE
 
     summ = OUT_DIR / "smd_summary.txt"
     spacing_str = f"{spacing:.4f} m"
@@ -788,22 +1203,30 @@ def main():
             spacing_str = f"pitch={pitch_x:.4f} m (uniform)"
         else:
             spacing_str = f"pitch_x={pitch_x:.4f} m, pitch_y={pitch_y:.4f} m"
+    if use_optics and SMD_OUTER_OPTICS:
+        optics_desc = f"outer ring only (fwhm={float(SMD_OUTER_FWHM_DEG):.1f} deg)"
+    else:
+        optics_desc = "enabled (normalized patterns)" if use_optics else "disabled (Lambertian)"
+    power_mode_desc = "ring-wise" if not per_module_mode else "outer ring per-module"
     summ.write_text(
         "SMD macro emitter summary:\n"
         f"  rings       : {rings_local}  (center=ring 0)\n"
         f"  modules     : {len(positions)}  (A001844)\n"
         f"  spacing     : {spacing_str}  (outer margin {WALL_MARGIN_M:.3f} m)\n"
         f"  patch side  : {PATCH_SIDE_M*1e3:.1f} mm\n"
-        f"  optics      : {'enabled (normalized patterns)' if use_optics else 'disabled (Lambertian)'}\n"
+        f"  optics      : {optics_desc}\n"
+        f"  power_mode  : {power_mode_desc}\n"
         f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}\n"
         f"  ring powers : {RING_POWERS_SOURCE}\n"
         f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)\n"
         + derate_desc
+        + thermal_desc
         + ("  per-ring watts (per module, input → effective):\n" + "\n".join(lines) + "\n")
         + f"  total electrical input ≈ {total_w_in:.1f} W\n"
         + f"  total effective (derated) ≈ {total_w_eff:.1f} W\n"
         f"  PPE by channel (µmol/J): {ppe_str}\n"
-        f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s\n"
+        f"  avg PPE (mix, base) ≈ {avg_ppe:.3f} µmol/J\n"
+        f"  effective PPE (derated) ≈ {effective_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s\n"
     )
 
     print("SMD macro emitter summary:")
@@ -811,21 +1234,25 @@ def main():
     print(f"  modules     : {len(positions)}  (A001844)")
     print(f"  spacing     : {spacing_str}  (outer margin {WALL_MARGIN_M:.3f} m)")
     print(f"  patch side  : {PATCH_SIDE_M*1e3:.1f} mm")
-    print(f"  optics      : {'enabled (normalized patterns)' if use_optics else 'disabled (Lambertian)'}")
+    print(f"  optics      : {optics_desc}")
+    print(f"  power_mode  : {power_mode_desc}")
     print(f"  subgrid     : {SUBPATCH_GRID}x{SUBPATCH_GRID}")
     print(f"  ring powers : {RING_POWERS_SOURCE}")
     print("  per-ring watts (per module):"); [print(s) for s in lines]
     print(f"  PPE_IS_SYSTEM: {int(PPE_IS_SYSTEM)}  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)")
     print(derate_desc.rstrip())
+    print(thermal_desc.rstrip())
     print(f"  total electrical input ≈ {total_w_in:.1f} W")
     print(f"  total effective (derated) ≈ {total_w_eff:.1f} W")
     print(f"  PPE by channel (µmol/J): {ppe_str}")
-    print(f"  avg PPE (mix) ≈ {avg_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s")
+    print(f"  avg PPE (mix, base) ≈ {avg_ppe:.3f} µmol/J")
+    print(f"  effective PPE (derated) ≈ {effective_ppe:.3f} µmol/J → total photons ≈ {total_umol:.0f} µmol/s")
     print(f"✔ Wrote {out}")
     if use_optics: print(f"✔ Wrote {CAL_FILE}")
     print(f"✔ Wrote {summ}")
 
     # Authoritative snapshot for overlays/GUI (meters)
+    outer_indices = [i for i, p in enumerate(positions) if int(p.get("ring", 0)) == outer_ring]
     write_smd_layout_json(
         positions=positions,
         spacing_m=spacing,
@@ -842,6 +1269,9 @@ def main():
             "pitch_y_m": pitch_y,
             "swapped_axes": meta.get("swapped_axes", False),
             "rings": rings_local,
+            "power_mode": power_mode_desc,
+            "outer_ring_index": outer_ring,
+            "outer_ring_indices": outer_indices,
         }
     )
     print("✔ Wrote ies_sources/smd_layout.json")

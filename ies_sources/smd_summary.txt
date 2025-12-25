@@ -1,21 +1,25 @@
 SMD macro emitter summary:
-  rings       : 6  (center=ring 0)
-  modules     : 61  (A001844)
-  spacing     : 0.2527 m  (outer margin 0.000 m)
-  patch side  : 120.0 mm
+  rings       : 7  (center=ring 0)
+  modules     : 85  (A001844)
+  spacing     : 0.2203 m  (outer margin 0.000 m)
+  patch side  : 127.0 mm
   optics      : disabled (Lambertian)
+  power_mode  : ring-wise
   subgrid     : 1x1
   ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_optimized.json
-  PPE_IS_SYSTEM: 1  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)
-  derate      : 1.0000 (= user_scale(EFF_SCALE env) 1.000)
+  PPE_IS_SYSTEM: 0  (1=fixture-level PPE; 0=apply driver/thermal/optical derates)
+  derate      : 0.9103 (= DRIVER_EFF 0.960 × THERMAL_EFF tiered(avg 0.946) × BOARD_OPT_EFF 0.900 × WIRING_EFF 0.990 × user_scale(EFF_SCALE env) 1.000 × droop 1.064 (P_NOM=100.0, K=0.120))
+  thermal tier: <=70 W/mod 0.97, >70 W/mod 0.93 (avg 0.946)
   per-ring watts (per module, input → effective):
-    ring 0: 28.99 W in (28.99 W eff) × 1 mods
-    ring 1: 26.26 W in (26.26 W eff) × 4 mods
-    ring 2: 33.77 W in (33.77 W eff) × 8 mods
-    ring 3: 31.90 W in (31.90 W eff) × 12 mods
-    ring 4: 10.02 W in (10.02 W eff) × 16 mods
-    ring 5: 70.91 W in (70.91 W eff) × 20 mods
-  total electrical input ≈ 2365.5 W
-  total effective (derated) ≈ 2365.5 W
-  PPE by channel (µmol/J): B=2.400, C=2.000, CW=3.350, FR=3.600, R=4.600, UV=1.000, WW=3.350
-  avg PPE (mix) ≈ 3.394 µmol/J → total photons ≈ 8030 µmol/s
+    ring 0: 29.66 W in (26.19 W eff) × 1 mods
+    ring 1: 31.17 W in (27.52 W eff) × 4 mods
+    ring 2: 40.16 W in (35.46 W eff) × 8 mods
+    ring 3: 46.31 W in (40.89 W eff) × 12 mods
+    ring 4: 20.03 W in (17.68 W eff) × 16 mods
+    ring 5: 16.47 W in (14.54 W eff) × 20 mods
+    ring 6: 100.00 W in (84.66 W eff) × 24 mods
+  total electrical input ≈ 4081.1 W
+  total effective (derated) ≈ 3516.2 W
+  PPE by channel (µmol/J): CW=3.050, R=3.900, WW=3.000
+  avg PPE (mix, base) ≈ 3.171 µmol/J
+  effective PPE (derated) ≈ 2.732 µmol/J → total photons ≈ 11150 µmol/s
