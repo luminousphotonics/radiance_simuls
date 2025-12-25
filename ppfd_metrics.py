@@ -65,7 +65,7 @@ def compute_ppfd_metrics(
             utilization_at_cap (mean_at_cap/setpoint), dim_penalty,
             coverage_ge_{int(frac*100)} (fraction of points >= frac*setpoint)
           (if both setpoint_ppfd and total_input_watts are set, and canopy_area_m2 is set)
-            watts_at_cap, deuc
+            watts_at_cap, deuc_elec (also aliased as deuc)
           (if setpoint_ppfd and canopy_area_m2 are set)
             ppf_ge_{int(frac*100)}_at_cap (PPF from points >= frac*setpoint, after peak-capping)
           (if setpoint_ppfd and canopy_area_m2 and total_input_watts are set)
@@ -156,7 +156,8 @@ def compute_ppfd_metrics(
                 # input watts in the denominator (otherwise cap_scale cancels).
                 w_in = float(out["watts_in"])
                 if w_in > 0:
-                    out["deuc"] = float(out["ppf_at_cap"]) / w_in
+                    out["deuc_elec"] = float(out["ppf_at_cap"]) / w_in
+                    out["deuc"] = out["deuc_elec"]
 
         # Coverage after peak-capping (this is what the grower actually sees if they cap peaks).
         for frac in coverage_fracs:
@@ -202,40 +203,47 @@ def compute_ppfd_metrics(
 
 
 def format_ppfd_metrics_line(m: dict[str, Any]) -> str:
-    """Human-readable one-liner for logs."""
+    """Human-readable multi-line block for logs."""
 
-    parts: list[str] = []
-    parts.append(f"mean={m['mean']:.2f}")
-    parts.append(f"min={m['min']:.2f}")
-    parts.append(f"max={m['max']:.2f}")
-    parts.append(f"p05={m['p05']:.2f}")
-    parts.append(f"p95={m['p95']:.2f}")
-    parts.append(f"peak/mean={m['peak_over_mean']:.3f}")
-    parts.append(f"min/mean={m['min_over_mean']:.3f}")
+    lines: list[str] = []
+    lines.append(
+        "stats: "
+        f"mean={m['mean']:.2f} min={m['min']:.2f} max={m['max']:.2f} "
+        f"p05={m['p05']:.2f} p95={m['p95']:.2f}"
+    )
+    lines.append(
+        "ratios: "
+        f"peak/mean={m['peak_over_mean']:.3f} min/mean={m['min_over_mean']:.3f}"
+    )
 
     if "ppf_out" in m:
-        parts.append(f"PPF={m['ppf_out']:.1f}µmol/s")
+        lines.append(f"ppf: out={m['ppf_out']:.1f} umol/s")
 
     if "setpoint_ppfd" in m:
         s = float(m["setpoint_ppfd"])
-        parts.append(f"cap={s:.0f}")
-        parts.append(f"cap_scale={m['cap_scale']:.3f}")
-        parts.append(f"mean@cap={m['mean_at_cap']:.2f}")
-        parts.append(f"util@cap={100.0*m['utilization_at_cap']:.1f}%")
+        cap_parts = [
+            f"cap={s:.0f}",
+            f"cap_scale={m['cap_scale']:.3f}",
+            f"mean@cap={m['mean_at_cap']:.2f}",
+            f"util@cap={100.0*m['utilization_at_cap']:.1f}%",
+        ]
         if "ppf_at_cap" in m:
-            parts.append(f"PPF@cap={m['ppf_at_cap']:.1f}µmol/s")
-        if "deuc" in m:
-            parts.append(f"DEUC={m['deuc']:.3f}µmol/J")
-        # If present, include common coverage keys.
+            cap_parts.append(f"ppf@cap={m['ppf_at_cap']:.1f} umol/s")
+        if "deuc_elec" in m:
+            cap_parts.append(f"DEUC_elec={m['deuc_elec']:.3f} umol/J")
+        elif "deuc" in m:
+            cap_parts.append(f"DEUC_elec={m['deuc']:.3f} umol/J")
         for k in ("coverage_ge_90", "coverage_ge_95"):
             if k in m:
-                parts.append(f"{k.replace('coverage_ge_', 'cov≥')}={100.0*m[k]:.1f}%")
+                cap_parts.append(f"{k.replace('coverage_ge_', 'cov>=')}={100.0*m[k]:.1f}%")
+        lines.append("cap: " + " ".join(cap_parts))
 
     # Legacy is optional; only show if caller asked for it.
     if isinstance(m.get("legacy"), dict):
         L = m["legacy"]
-        parts.append(f"std={L['std']:.2f}")
-        parts.append(f"CV={L['cv_percent']:.2f}%")
-        parts.append(f"DOU={L['dou_percent']:.2f}%")
+        lines.append(
+            "legacy: "
+            f"std={L['std']:.2f} CV={L['cv_percent']:.2f}% DOU={L['dou_percent']:.2f}%"
+        )
 
-    return " ".join(parts)
+    return "\n".join(lines)

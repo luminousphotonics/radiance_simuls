@@ -43,6 +43,7 @@ LENGTH_M       = _len_ft * 0.3048
 WIDTH_M        = _wid_ft * 0.3048
 LENGTH_M, WIDTH_M = _maybe_swap_dims(LENGTH_M, WIDTH_M)
 WALL_MARGIN_M  = float(os.getenv("MARGIN_IN", "0").strip()) * 0.0254
+EDGE_INSET_M   = float(os.getenv("SPYDR_EDGE_INSET_IN", "0").strip()) * 0.0254
 MOUNT_Z_M       = float(os.getenv("SPYDR_Z_M", "0.4572"))
 
 # Grid of fixtures (MUST be passed in when you generate)
@@ -111,8 +112,8 @@ def _safe_half_spans(length_m, width_m, wall_margin, hx, hy):
 
 def _evenly_spaced_centers(span_m: float, fixture_span_m: float, count: int, wall_margin_m: float):
     """
-    Return center coordinates spanning the room axis with equal gaps between
-    walls and fixtures (edge-to-edge), keeping all fixtures inside the walls.
+    Return center coordinates spanning the room axis with fixtures hugging
+    the perimeter (zero wall gap) and even gaps between fixtures.
     """
     if count <= 0:
         return []
@@ -120,16 +121,19 @@ def _evenly_spaced_centers(span_m: float, fixture_span_m: float, count: int, wal
     free = usable - count * fixture_span_m
     if free < -1e-9:
         raise SystemExit("ERROR: fixtures overlap given current room size, margin, or bar lengths.")
-    gap = free / (count + 1)
-    start = -0.5 * usable + gap + 0.5 * fixture_span_m
+    if count == 1:
+        return [0.0]
+    gap = free / (count - 1)
+    start = -0.5 * usable + 0.5 * fixture_span_m
     return [start + i * (fixture_span_m + gap) for i in range(count)]
 
 def _fixture_centers(L, W, spacing):
     hx, hy = _fixture_half_extents(L, W, spacing, BARS)
     # Ensure a single fixture fits; spacing uses edge-to-edge gaps that include the walls.
-    _safe_half_spans(LENGTH_M, WIDTH_M, WALL_MARGIN_M, hx, hy)
-    xs = _evenly_spaced_centers(LENGTH_M, 2.0 * hx, NX, WALL_MARGIN_M)
-    ys = _evenly_spaced_centers(WIDTH_M,  2.0 * hy, NY, WALL_MARGIN_M)
+    eff_margin = WALL_MARGIN_M + EDGE_INSET_M
+    _safe_half_spans(LENGTH_M, WIDTH_M, eff_margin, hx, hy)
+    xs = _evenly_spaced_centers(LENGTH_M, 2.0 * hx, NX, eff_margin)
+    ys = _evenly_spaced_centers(WIDTH_M,  2.0 * hy, NY, eff_margin)
     return [(x, y) for y in ys for x in xs]
 
 def get_fixture_positions():

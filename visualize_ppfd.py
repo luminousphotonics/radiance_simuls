@@ -41,6 +41,12 @@ def parse_args():
         default="auto",
         help="Which hardware overlay to draw on heatmaps",
     )
+    ap.add_argument(
+        "--plane",
+        choices=["xy", "xz", "yz"],
+        default="xy",
+        help="Projection plane for heatmaps (xy, xz, or yz)",
+    )
     return ap.parse_args()
 
 
@@ -51,17 +57,41 @@ GRID_SIZE = args.grid_size
 VMIN, VMAX = float(args.vmin), float(args.vmax)
 CMAP = args.cmap
 DPI = args.dpi
+PLANE = args.plane
 
 # ---- Overlays ---------------------------------------------------------------
 overlay_points = []   # tuples: (label, [(x,y,z), ...], scatter_kwargs)
-overlay_polys  = []   # tuples: (label, [ [(x,y),...4], ...], poly_kwargs)
+overlay_polys  = []   # tuples: (label, [ [(x,y[,z]),...], ...], poly_kwargs)
+overlay_lines  = []   # tuples: (label, [((x1,y1,z1),(x2,y2,z2)), ...], line_kwargs)
 overlay_room_bounds = None  # (L, W) in meters if available from layout JSON
-overlay_room_bounds = None  # (L, W) in meters if present in layout JSON
 
 SMD_JSON = Path("ies_sources/smd_layout.json")
 SPYDR_JSON = Path("ies_sources/spydr3_layout.json")
 QUANTUM_JSON = Path("ies_sources/quantum_layout.json")
 COB_JSON = Path("ies_sources/cob_layout.json")
+
+
+def project_point(pt):
+    if pt is None:
+        return None
+    if len(pt) == 2:
+        return (pt[0], pt[1])
+    x, y, z = pt
+    if PLANE == "xy":
+        return (x, y)
+    if PLANE == "xz":
+        return (x, z)
+    return (y, z)
+
+
+def project_poly(poly):
+    out = []
+    for p in poly:
+        pr = project_point(p)
+        if pr is None:
+            continue
+        out.append(pr)
+    return out
 
 def _safe_mtime(p: Path) -> float:
     try:
@@ -71,7 +101,8 @@ def _safe_mtime(p: Path) -> float:
 
 def auto_pick_overlay_mode() -> str:
     candidates = []
-    for name, path in (("smd", SMD_JSON), ("spydr3", SPYDR_JSON), ("quantum", QUANTUM_JSON), ("cob", COB_JSON)):
+    for name, path in (("smd", SMD_JSON), ("spydr3", SPYDR_JSON), ("quantum", QUANTUM_JSON),
+                       ("cob", COB_JSON)):
         if path.exists():
             candidates.append((name, _safe_mtime(path)))
     if not candidates:
@@ -227,13 +258,13 @@ def try_overlay_cob():
                 polys.append(xy)
 
             if polys:
-                overlay_polys.append(("Perimeter strips", polys,
+                overlay_polys.append(("COB halos", polys,
                                       dict(edgecolor='red', facecolor='none', linewidth=1.2, alpha=0.95)))
             if centers:
                 overlay_points.append(("COB centers", centers,
                                        dict(marker='o', s=10, color='white', linewidths=0.6)))
 
-            print(f"Overlay: COB from JSON ({len(centers)} COBs, {len(polys)} strip segments)")
+            print(f"Overlay: COB from JSON ({len(centers)} COBs, {len(polys)} halo segments)")
             return
         except Exception as e:
             print("Overlay (COB) JSON read failed; falling back to module:", e)
@@ -247,6 +278,7 @@ def try_overlay_cob():
         print(f"Overlay: {len(pts)} COB centers (from module)")
     except Exception as e:
         print("Overlay (COB) unavailable:", e)
+
 
 if args.overlay == "auto":
     mode = auto_pick_overlay_mode()
@@ -280,25 +312,41 @@ except Exception as e:
 if df.empty:
     print("Error: PPFD file is empty."); sys.exit(1)
 
-x = df.x.values; y = df.y.values; zvals = df.ppfd.values
+zvals = df.ppfd.values
+
+if PLANE == "xy":
+    u_vals = df.x.values
+    v_vals = df.y.values
+    u_label = "X (m)"
+    v_label = "Y (m)"
+elif PLANE == "xz":
+    u_vals = df.x.values
+    v_vals = df.z.values
+    u_label = "X (m)"
+    v_label = "Z (m)"
+else:  # yz
+    u_vals = df.y.values
+    v_vals = df.z.values
+    u_label = "Y (m)"
+    v_label = "Z (m)"
 
 # ---- Grid reshape or interpolate -------------------------------------------
 X=Y=Z=None
 df_r = df.copy()
-df_r["xr"] = df_r["x"].round(6)
-df_r["yr"] = df_r["y"].round(6)
-ptab = df_r.pivot_table(index="yr", columns="xr", values="ppfd", aggfunc="mean")
+df_r["ur"] = np.round(u_vals, 6)
+df_r["vr"] = np.round(v_vals, 6)
+ptab = df_r.pivot_table(index="vr", columns="ur", values="ppfd", aggfunc="mean")
 if (ptab.shape[0]*ptab.shape[1] == len(df)) and not ptab.isna().any().any():
     print("Data forms a regular grid (via pivot)")
     Xc = np.array(ptab.columns, dtype=float); Yc = np.array(ptab.index, dtype=float)
     X, Y = np.meshgrid(Xc, Yc); Z = ptab.values
 else:
     print(f"Data is irregular ({len(df)} pts); interpolating to {GRID_SIZE}×{GRID_SIZE}")
-    X, Y = np.meshgrid(np.linspace(x.min(), x.max(), GRID_SIZE),
-                       np.linspace(y.min(), y.max(), GRID_SIZE))
+    X, Y = np.meshgrid(np.linspace(u_vals.min(), u_vals.max(), GRID_SIZE),
+                       np.linspace(v_vals.min(), v_vals.max(), GRID_SIZE))
     for method in ("cubic","linear","nearest"):
         try:
-            Z = griddata((x,y), zvals, (X,Y), method=method); break
+            Z = griddata((u_vals, v_vals), zvals, (X, Y), method=method); break
         except Exception:
             pass
 
@@ -328,7 +376,7 @@ try:
     ax.set_zlim(VMIN, VMAX)
     fig.colorbar(surf, ax=ax, label="PPFD (µmol/m²/s)")
     ax.set_title(f"3D PPFD Surface (clamped to {VMIN:.0f}–{VMAX:.0f})")
-    ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)"); ax.set_zlabel("PPFD")
+    ax.set_xlabel(u_label); ax.set_ylabel(v_label); ax.set_zlabel("PPFD")
     fig.savefig(OUTDIR / "ppfd_surface_3d.png", dpi=DPI, bbox_inches="tight")
     plt.close(fig)
     print(" -> Saved ppfd_surface_3d.png")
@@ -365,7 +413,7 @@ try:
         cbar_kws={"label": "PPFD (µmol/m²/s)"},
     )
     plt.title("PPFD Heatmap (annotated)" if annotate else "PPFD Heatmap")
-    plt.xlabel("X (m)"); plt.ylabel("Y (m)")
+    plt.xlabel(u_label); plt.ylabel(v_label)
     plt.xticks(rotation=45, ha='right'); plt.yticks(rotation=0)
     plt.tight_layout()
     plt.savefig(OUTDIR / "ppfd_heatmap_annotated.png", dpi=DPI)
@@ -392,23 +440,38 @@ try:
 
     # polygons first (bars), then points (centers)
     for name, polys, kwargs in overlay_polys:
-        for xy in polys:
+        for poly in polys:
+            xy = project_poly(poly)
+            if len(xy) < 3:
+                continue
             ax.add_patch(Polygon(xy, **kwargs))
             xs_p, ys_p = zip(*xy)
             xmin = min(xmin, min(xs_p)); xmax = max(xmax, max(xs_p))
             ymin = min(ymin, min(ys_p)); ymax = max(ymax, max(ys_p))
         ax.plot([], [], color='black', label=f"{name} ({len(polys)})")  # legend hook
 
+    for name, lines, kwargs in overlay_lines:
+        for a, b in lines:
+            pa = project_point(a)
+            pb = project_point(b)
+            if pa is None or pb is None:
+                continue
+            ax.plot([pa[0], pb[0]], [pa[1], pb[1]], **kwargs)
+            xmin = min(xmin, pa[0], pb[0]); xmax = max(xmax, pa[0], pb[0])
+            ymin = min(ymin, pa[1], pb[1]); ymax = max(ymax, pa[1], pb[1])
+        ax.plot([], [], color=kwargs.get("color", "cyan"), label=f"{name} ({len(lines)})")
+
     for name, pts, kwargs in overlay_points:
-        xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
+        proj = [project_point(p) for p in pts]
+        xs=[p[0] for p in proj if p is not None]; ys=[p[1] for p in proj if p is not None]
         ax.scatter(xs, ys, **kwargs, label=f"{name} ({len(pts)})")
         if xs and ys:
             xmin = min(xmin, min(xs)); xmax = max(xmax, max(xs))
             ymin = min(ymin, min(ys)); ymax = max(ymax, max(ys))
 
-    # Prefer explicit room bounds if provided by overlay JSON; if aspect is swapped,
+    # Prefer explicit room bounds if provided by overlay JSON (xy plane only); if aspect is swapped,
     # choose the orientation that best matches the PPFD grid spans.
-    if overlay_room_bounds:
+    if overlay_room_bounds and PLANE == "xy":
         grid_span_x = xmax - xmin
         grid_span_y = ymax - ymin
         L, W = overlay_room_bounds
@@ -428,7 +491,7 @@ try:
     if overlay_polys or overlay_points:
         ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.20), ncol=2, framealpha=0.9)
     ax.set_title("PPFD Heatmap with Overlay", y=1.08)
-    ax.set_xlabel("X (m)"); ax.set_ylabel("Y (m)")
+    ax.set_xlabel(u_label); ax.set_ylabel(v_label)
     ax.set_aspect('equal', adjustable='box'); fig.tight_layout()
     fig.savefig(OUTDIR/"ppfd_heatmap_overlay.png", dpi=DPI); plt.close(fig)
     print(" -> Saved ppfd_heatmap_overlay.png")
@@ -456,7 +519,7 @@ try:
         cd = plt.contourf(X, Y, Z_dev, cmap="RdYlBu", levels=levels)
         plt.colorbar(cd, label="|PPFD – mean|")
         plt.title("PPFD Absolute Deviation from Mean")
-        plt.xlabel("X (m)"); plt.ylabel("Y (m)")
+        plt.xlabel(u_label); plt.ylabel(v_label)
         plt.gca().set_aspect('equal', adjustable='box'); plt.tight_layout()
         plt.savefig(OUTDIR/"ppfd_deviation.png", dpi=DPI); plt.close()
         print(" -> Saved ppfd_deviation.png")
@@ -467,18 +530,21 @@ except Exception as e:
 try:
     fig = go.Figure(data=[
         go.Scatter3d(
-            x=df.x, y=df.y, z=df.ppfd, mode="markers",
+            x=u_vals, y=v_vals, z=df.ppfd, mode="markers",
             marker=dict(size=4, color=df.ppfd, colorscale=CMAP, cmin=VMIN, cmax=VMAX,
                         showscale=True, colorbar=dict(title="PPFD"))
         )
     ])
     for name, pts, _ in overlay_points:
-        xs=[p[0] for p in pts]; ys=[p[1] for p in pts]; zs=[0]*len(pts)
-        fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode='markers',
+        proj = [project_point(p) for p in pts]
+        xs=[p[0] for p in proj if p is not None]
+        ys=[p[1] for p in proj if p is not None]
+        zs=[0]*len(xs)
+        fig.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="markers",
                                    marker=dict(size=6, color='black', symbol='square-open'),
                                    name=name))
     fig.update_layout(title=f"Interactive 3D PPFD Scatter (clamped {VMIN:.0f}–{VMAX:.0f})",
-                      scene=dict(xaxis_title="X (m)", yaxis_title="Y (m)", zaxis_title="PPFD"),
+                      scene=dict(xaxis_title=u_label, yaxis_title=v_label, zaxis_title="PPFD"),
                       width=900, height=650)
     fig.write_html(OUTDIR/"ppfd_scatter_3d.html"); print(" -> Saved ppfd_scatter_3d.html")
 except Exception as e:

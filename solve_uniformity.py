@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +51,21 @@ def load_basis(path: Path) -> np.ndarray:
         return np.load(path)
     # assume csv/tsv
     return np.loadtxt(path, delimiter=",")
+
+
+def load_basis_manifest(basis_path: Path) -> dict | None:
+    # Prefer explicit BASIS_MANIFEST if set; otherwise look next to basis file.
+    manifest_env = os.environ.get("BASIS_MANIFEST", "").strip()
+    if manifest_env:
+        p = Path(manifest_env)
+    else:
+        p = basis_path.parent / "basis_manifest.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
 
 
 def build_D(K: int) -> np.ndarray:
@@ -99,6 +115,26 @@ def main():
     A = load_basis(basis_path)
     n_points, K = A.shape
     print(f"Loaded A with shape (n_points={n_points}, n_rings={K})")
+    manifest = load_basis_manifest(basis_path)
+    var_mode = None
+    ring_group = None
+    outer_indices = []
+    outer_ring_index = None
+    ring_indices = None
+    if isinstance(manifest, dict):
+        var_mode = manifest.get("variables")
+        ring_indices = manifest.get("ring_indices")
+        outer_indices = list(manifest.get("outer_ring_indices") or [])
+        outer_ring_index = manifest.get("outer_ring_index")
+        groups = manifest.get("variable_groups") or {}
+        try:
+            ring_group = int(groups.get("rings")) if groups.get("rings") is not None else None
+        except Exception:
+            ring_group = None
+    if var_mode == "ring_plus_outer_modules" and ring_group is not None:
+        if ring_group + len(outer_indices) != K:
+            var_mode = None
+            ring_group = None
 
     target_mu = float(args.target_ppfd)
     w_min = float(args.w_min)
@@ -195,7 +231,10 @@ def main():
             print(" ", format_ppfd_metrics_line(m))
 
             # Score: prioritize low CV; tie-break with smoother ring steps and higher Min/Avg
-            diffs = np.diff(w_scaled)
+            if ring_group is not None and ring_group >= 2:
+                diffs = np.diff(w_scaled[:ring_group])
+            else:
+                diffs = np.diff(w_scaled)
             smooth_pen = np.std(diffs) / max(1e-9, np.mean(w_scaled))
             legacy = m.get("legacy") or {}
             score = (float(legacy.get("cv_percent", float("inf"))), smooth_pen, -float(legacy.get("min_over_avg", 0.0)))
@@ -258,9 +297,16 @@ def main():
         print("strategy=chebyshev (minimax)")
     else:
         print(f"lambda_s={lam_pair_best[0]}, lambda_r={lam_pair_best[1]}, lambda_mean={lambda_mean}")
-    print("ring powers (W per module):")
-    for i, wi in enumerate(w_best):
-        print(f"  ring {i}: {wi:.3f} W")
+    if var_mode == "ring_plus_outer_modules" and ring_group is not None:
+        print("ring powers (W per module):")
+        use_indices = ring_indices if isinstance(ring_indices, list) and len(ring_indices) == ring_group else list(range(ring_group))
+        for i, wi in zip(use_indices, w_best[:ring_group]):
+            print(f"  ring {int(i)}: {wi:.3f} W")
+        print(f"outer ring modules: {len(w_best[ring_group:])} variables")
+    else:
+        print("ring powers (W per module):")
+        for i, wi in enumerate(w_best):
+            print(f"  ring {i}: {wi:.3f} W")
 
     print(format_ppfd_metrics_line(m_best))
 
@@ -270,12 +316,26 @@ def main():
         "lambda_s_best": None if lam_pair_best[0] == "chebyshev" else lam_pair_best[0],
         "lambda_r_best": None if lam_pair_best[0] == "chebyshev" else lam_pair_best[1],
         "lambda_mean": lambda_mean,
-        "ring_indices": list(range(K)),
-        "ring_powers_W_per_module": [float(x) for x in w_best],
         "metrics": m_best,
         "basis_file": str(basis_path),
         "n_points": int(n_points),
     }
+    if var_mode == "ring_plus_outer_modules" and ring_group is not None:
+        use_indices = ring_indices if isinstance(ring_indices, list) and len(ring_indices) == ring_group else list(range(ring_group))
+        out.update({
+            "variables": "ring_plus_outer_modules",
+            "ring_indices": [int(x) for x in use_indices],
+            "ring_powers_W_per_module": [float(x) for x in w_best[:ring_group]],
+            "outer_ring_index": int(outer_ring_index) if outer_ring_index is not None else None,
+            "outer_ring_indices": [int(x) for x in outer_indices],
+            "outer_ring_powers_W_per_module": [float(x) for x in w_best[ring_group:]],
+            "variable_groups": {"rings": int(ring_group), "outer_modules": int(len(w_best) - ring_group)},
+        })
+    else:
+        out.update({
+            "ring_indices": list(range(K)),
+            "ring_powers_W_per_module": [float(x) for x in w_best],
+        })
     Path(args.out_json).write_text(json.dumps(out, indent=2))
     print(f"\nSaved {args.out_json}")
 

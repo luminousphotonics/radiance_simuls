@@ -252,7 +252,7 @@ def get_extension_groups(base_n, num_steps, shift_x=0.0, shift_y=0.0):
     return extension_groups
 
 
-def generate_layout(length_ft, width_ft):
+def generate_layout(length_ft, width_ft, base_n_override=None):
     """
     Main Entry Point.
     Returns:
@@ -263,7 +263,10 @@ def generate_layout(length_ft, width_ft):
     max_dim = max(length_ft, width_ft)
     
     # 1. Determine Base Unit Size (n)
-    base_n = get_n_from_dimensions(min_dim)
+    if base_n_override is not None:
+        base_n = max(1, int(base_n_override))
+    else:
+        base_n = get_n_from_dimensions(min_dim)
     
     # 2. Determine Tiling Strategy (Square vs Rect Extension)
     c = 2.0

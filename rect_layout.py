@@ -163,9 +163,10 @@ def build_rect_grid(
     wall_margin_m = _float_env("WALL_MARGIN_M", 0.127) if wall_margin_m is None else wall_margin_m
     module_side_m = _float_env("MODULE_SIDE_M", 0.12)  if module_side_m is None else module_side_m
 
-    # Interior usable half-spans
-    half_x_int = (length_m / 2.0) - wall_margin_m - module_side_m / 2.0
-    half_y_int = (width_m / 2.0) - wall_margin_m - module_side_m / 2.0
+    fixture_leg_m = _float_env("SMD_FIXTURE_ANGLE_IN", 0.125) * 0.0254
+    # Interior usable half-spans (module + fixture angle)
+    half_x_int = (length_m / 2.0) - wall_margin_m - module_side_m / 2.0 - fixture_leg_m
+    half_y_int = (width_m / 2.0) - wall_margin_m - module_side_m / 2.0 - fixture_leg_m
     if half_x_int <= 0 or half_y_int <= 0:
         raise RuntimeError(
             "Rect layout: non-positive interior region; "
@@ -177,13 +178,16 @@ def build_rect_grid(
 
     # Reference pitch from canonical 12 ft short side (ring_n=7 → span_v=14)
     base_short_m = 3.6576
-    base_half_short = (base_short_m / 2.0) - wall_margin_m - module_side_m / 2.0
-    base_span_v = 14.0
+    base_half_short = (base_short_m / 2.0) - wall_margin_m - module_side_m / 2.0 - fixture_leg_m
+    base_ring_n = int(_float_env("SMD_BASE_RING_N", 7) or 7)
+    if base_ring_n < 1:
+        base_ring_n = 1
+    base_span_v = float(2 * base_ring_n)
     base_pitch = (2.0 * base_half_short) / base_span_v  # ≈0.2345 m
     base_long_m = 7.3152  # 24 ft
-    base_half_long = (base_long_m / 2.0) - wall_margin_m - module_side_m / 2.0
+    base_half_long = (base_long_m / 2.0) - wall_margin_m - module_side_m / 2.0 - fixture_leg_m
     base_span_long_m = 2.0 * base_half_long
-    base_offset = 8
+    base_offset = int(_float_env("SMD_BASE_OFFSET", base_ring_n + 1))
 
     aspect = dim_x_int / dim_y_int if dim_y_int > 0 else 1.0
     squareish = 0.9 <= aspect <= 1.1

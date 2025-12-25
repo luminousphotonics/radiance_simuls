@@ -1,23 +1,25 @@
 COB emitter summary:
-  layout      : square (ring_n=7, rings=8)
-  fixtures    : 113 COBs
+  layout      : rect_rect (ring_n=7, rings=8)
+  fixtures    : 323 COBs
   ring powers : json:/Users/austinrouse/radiance_simuls/ring_powers_cob.json
   derate(EFF_SCALE)=1.0000
-  strip mode  : proportional
-  strip frac  : 0.0500 (of COB ring watts)
+  halo mode   : proportional
+  halo geom   : halo
+  halo frac   : 0.1110 (of COB ring watts)
+  optics      : off
   COB PPE     : 2.760 µmol/J
-  STRIP PPE   : 2.760 µmol/J
-  COB watts   : input ≈ 5462.6 W  effective ≈ 5462.6 W
-  strip watts : input ≈ 273.1 W  effective ≈ 273.1 W
-  total electrical input ≈ 5735.7 W
-  total effective (derated) ≈ 5735.7 W
-  total photons ≈ 15831 µmol/s
-  per-ring (COB + STRIP):
-    ring  0: COB    39.67 W in (   39.67 W eff) →  39.67 W/COB ( 39.67 eff) ×   1 | STRIP     1.98 W in (    1.98 W eff) →    0.00 W/m (   0.00 eff) over   0.00 m | PPF    115.0 µmol/s
-    ring  1: COB   164.56 W in (  164.56 W eff) →  41.14 W/COB ( 41.14 eff) ×   4 | STRIP     8.23 W in (    8.23 W eff) →    5.02 W/m (   5.02 eff) over   1.64 m | PPF    476.9 µmol/s
-    ring  2: COB   343.70 W in (  343.70 W eff) →  42.96 W/COB ( 42.96 eff) ×   8 | STRIP    17.19 W in (   17.19 W eff) →    4.21 W/m (   4.21 eff) over   4.08 m | PPF    996.1 µmol/s
-    ring  3: COB   440.18 W in (  440.18 W eff) →  36.68 W/COB ( 36.68 eff) ×  12 | STRIP    22.01 W in (   22.01 W eff) →    3.60 W/m (   3.60 eff) over   6.12 m | PPF   1275.6 µmol/s
-    ring  4: COB   710.10 W in (  710.10 W eff) →  44.38 W/COB ( 44.38 eff) ×  16 | STRIP    35.50 W in (   35.50 W eff) →    4.35 W/m (   4.35 eff) over   8.16 m | PPF   2057.9 µmol/s
-    ring  5: COB  1035.05 W in ( 1035.05 W eff) →  51.75 W/COB ( 51.75 eff) ×  20 | STRIP    51.75 W in (   51.75 W eff) →    6.34 W/m (   6.34 eff) over   8.16 m | PPF   2999.6 µmol/s
-    ring  6: COB     0.00 W in (    0.00 W eff) →   0.00 W/COB (  0.00 eff) ×  24 | STRIP     0.00 W in (    0.00 W eff) →    0.00 W/m (   0.00 eff) over  10.20 m | PPF      0.0 µmol/s
-    ring  7: COB  2729.35 W in ( 2729.35 W eff) →  97.48 W/COB ( 97.48 eff) ×  28 | STRIP   136.47 W in (  136.47 W eff) →   11.15 W/m (  11.15 eff) over  12.24 m | PPF   7909.6 µmol/s
+  HALO PPE    : 2.760 µmol/J
+  COB watts   : input ≈ 13819.3 W  effective ≈ 13819.3 W
+  halo watts  : input ≈ 1533.9 W  effective ≈ 1533.9 W
+  total electrical input ≈ 15353.3 W
+  total effective (derated) ≈ 15353.3 W
+  total photons ≈ 42375 µmol/s
+  per-ring (COB + HALO):
+    ring  0: COB   261.46 W in (  261.46 W eff) →  17.43 W/COB ( 17.43 eff) ×  15 | HALO    29.02 W in (   29.02 W eff) →    3.54 W/m (   3.54 eff) over   8.19 m | PPF    801.7 µmol/s
+    ring  1: COB  1929.49 W in ( 1929.49 W eff) →  60.30 W/COB ( 60.30 eff) ×  32 | HALO   214.17 W in (  214.17 W eff) →   12.26 W/m (  12.26 eff) over  17.48 m | PPF   5916.5 µmol/s
+    ring  2: COB   553.69 W in (  553.69 W eff) →  15.38 W/COB ( 15.38 eff) ×  36 | HALO    61.46 W in (   61.46 W eff) →    3.13 W/m (   3.13 eff) over  19.66 m | PPF   1697.8 µmol/s
+    ring  3: COB  2325.63 W in ( 2325.63 W eff) →  58.14 W/COB ( 58.14 eff) ×  40 | HALO   258.15 W in (  258.15 W eff) →   11.82 W/m (  11.82 eff) over  21.84 m | PPF   7131.2 µmol/s
+    ring  4: COB   859.08 W in (  859.08 W eff) →  19.52 W/COB ( 19.52 eff) ×  44 | HALO    95.36 W in (   95.36 W eff) →    3.97 W/m (   3.97 eff) over  24.03 m | PPF   2634.2 µmol/s
+    ring  5: COB  2821.54 W in ( 2821.54 W eff) →  58.78 W/COB ( 58.78 eff) ×  48 | HALO   313.19 W in (  313.19 W eff) →   11.95 W/m (  11.95 eff) over  26.21 m | PPF   8651.9 µmol/s
+    ring  6: COB     0.00 W in (    0.00 W eff) →   0.00 W/COB (  0.00 eff) ×  52 | HALO     0.00 W in (    0.00 W eff) →    0.00 W/m (   0.00 eff) over  28.40 m | PPF      0.0 µmol/s
+    ring  7: COB  5068.44 W in ( 5068.44 W eff) →  90.51 W/COB ( 90.51 eff) ×  56 | HALO   562.60 W in (  562.60 W eff) →   18.40 W/m (  18.40 eff) over  30.58 m | PPF  15541.7 µmol/s

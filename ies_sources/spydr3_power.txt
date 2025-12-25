@@ -1,0 +1,10 @@
+ppe_effective=2.760000
+ppe_full=2.76
+ppe_low=3.0
+w_full=800
+w_low=390
+droop_k=0.116055
+eff_scale=1.00000000
+total_ppf=19800.00
+total_w=7173.9
+droop_enabled=1

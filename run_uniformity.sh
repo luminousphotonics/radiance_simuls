@@ -20,6 +20,7 @@ LAMBDA_S="${LAMBDA_S:-0.0 1e-3 1e-2 1e-1 1.0 10.0 30.0}"
 LAMBDA_R="${LAMBDA_R:-0.0 1e-3 1e-2 1e-1}"
 LAMBDA_MEAN="${LAMBDA_MEAN:-10.0}"
 USE_CHEBYSHEV="${USE_CHEBYSHEV:-1}"
+SMD_OUTER_PER_MODULE="${SMD_OUTER_PER_MODULE:-0}"
 
 echo
 echo "--- Uniformity pipeline ---"
@@ -83,7 +84,17 @@ if have_sha and have_sha != want_sha:
 
 have_env = manifest.get("emitter_env") or {}
 want_env = {
-    "PPE_IS_SYSTEM": int(os.environ.get("PPE_IS_SYSTEM", "1").strip() != "0"),
+    "SMD_BASE_RING_N": int(os.environ.get("SMD_BASE_RING_N", "7")),
+    "SMD_PERIM_GAP_FILL": int(os.environ.get("SMD_PERIM_GAP_FILL", "0")),
+    "SMD_OUTER_PER_MODULE": int(os.environ.get("SMD_OUTER_PER_MODULE", "0")),
+    "SMD_OUTER_OPTICS": int(os.environ.get("SMD_OUTER_OPTICS", "0")),
+    "SMD_OUTER_FWHM_DEG": float(os.environ.get("SMD_OUTER_FWHM_DEG", "40.0")),
+    "DROOP_P_NOM": float(os.environ.get("DROOP_P_NOM", "100.0")),
+    "DROOP_K": float(os.environ.get("DROOP_K", "0.12")),
+    "MODULE_SIDE_M": float(os.environ.get("MODULE_SIDE_M", "0.127")),
+    "SMD_FIXTURE_ANGLE_IN": float(os.environ.get("SMD_FIXTURE_ANGLE_IN", "0.125")),
+    "MARGIN_IN": float(os.environ.get("MARGIN_IN", "0.0")),
+    "PPE_IS_SYSTEM": int(os.environ.get("PPE_IS_SYSTEM", "0").strip() != "0"),
     "DRIVER_EFF": float(os.environ.get("DRIVER_EFF", "0.95")),
     "THERMAL_EFF": float(os.environ.get("THERMAL_EFF", "0.92")),
     "BOARD_OPT_EFF": float(os.environ.get("BOARD_OPT_EFF", "0.95")),
@@ -93,11 +104,15 @@ want_env = {
     "SUBPATCH_GRID": int(os.environ.get("SUBPATCH_GRID", "1")),
 }
 
+missing = []
 for k, v in want_env.items():
     if k not in have_env:
+        missing.append(k)
         continue
     if have_env[k] != v:
         raise SystemExit(f"basis env changed: {k} {have_env[k]} -> {v}")
+if missing:
+    raise SystemExit("basis env missing keys: " + ", ".join(sorted(missing)))
 PY
   then
     echo "Basis manifest differs from current emitter settings; rebuilding basis."
@@ -121,6 +136,27 @@ if [[ ! -f "${BASIS_PATH}" ]]; then
 fi
 
 echo "[2/3] Solving per-ring powers..."
+SMOOTH_GROUPS=""
+if [[ "${SMD_OUTER_PER_MODULE}" == "1" && -f "${ROOT}/basis_manifest.json" ]]; then
+  GROUPS="$(python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path("basis_manifest.json")
+try:
+    data = json.loads(p.read_text())
+except Exception:
+    data = {}
+groups = data.get("variable_groups") or {}
+r = groups.get("rings")
+o = groups.get("outer_modules")
+if r and o:
+    print(f"{int(r)} {int(o)}")
+PY
+)"
+  if [[ -n "${GROUPS}" ]]; then
+    SMOOTH_GROUPS="--smooth-groups ${GROUPS}"
+  fi
+fi
 "${PY}" "${ROOT}/solve_uniformity.py" \
   --basis "${BASIS_PATH}" \
   --target-ppfd "${TARGET_PPFD}" \
@@ -130,6 +166,7 @@ echo "[2/3] Solving per-ring powers..."
   --lambda-r ${LAMBDA_R} \
   --lambda-mean "${LAMBDA_MEAN}" \
   $( [[ "${USE_CHEBYSHEV}" == "1" ]] && echo "--use-chebyshev" ) \
+  ${SMOOTH_GROUPS} \
   --out-json "${OUT_JSON}"
 
 echo "[3/3] Running Radiance simulation with solved ring powers..."

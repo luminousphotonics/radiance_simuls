@@ -200,17 +200,20 @@ class MainWindow(QtWidgets.QWidget):
 
         solver_box = CollapsibleBox("Solver", collapsed=True)
         sol = QtWidgets.QGridLayout()
-        self.wmin = QtWidgets.QLineEdit("10"); self.wmax = QtWidgets.QLineEdit("120")
+        self.wmin = QtWidgets.QLineEdit("10"); self.wmax = QtWidgets.QLineEdit("100")
         self.lams = QtWidgets.QLineEdit("0 1e-3 1e-2 1e-1 1.0 10.0")
         self.lamr = QtWidgets.QLineEdit("0 1e-3 1e-2 1e-1")
         self.lammean = QtWidgets.QLineEdit("10")
         self.cheby = QtWidgets.QCheckBox("Use Chebyshev")
+        self.smd_outer_per_module = QtWidgets.QCheckBox("SMD outer ring per-module")
+        self.smd_outer_per_module.setChecked(False)
         sol.addWidget(QtWidgets.QLabel("W min"), 0, 0); sol.addWidget(self.wmin, 0, 1)
         sol.addWidget(QtWidgets.QLabel("W max"), 0, 2); sol.addWidget(self.wmax, 0, 3)
         sol.addWidget(QtWidgets.QLabel("lambda_s"), 1, 0); sol.addWidget(self.lams, 1, 1, 1, 3)
         sol.addWidget(QtWidgets.QLabel("lambda_r"), 2, 0); sol.addWidget(self.lamr, 2, 1, 1, 3)
         sol.addWidget(QtWidgets.QLabel("lambda_mean"), 3, 0); sol.addWidget(self.lammean, 3, 1)
         sol.addWidget(self.cheby, 3, 2, 1, 2)
+        sol.addWidget(self.smd_outer_per_module, 4, 0, 1, 4)
         solver_box.layout().addLayout(sol)
         row_boxes.addWidget(solver_box, 1)
 
@@ -224,6 +227,12 @@ class MainWindow(QtWidgets.QWidget):
         self.overlay = QtWidgets.QComboBox(); self.overlay.addItems(["auto","smd","spydr3","quantum","cob","both","none"])
         self.qb_perim = QtWidgets.QCheckBox("Fill Perimeter (Quantum)")
         self.qb_perim.setChecked(False)
+        self.smd_perim_fill = QtWidgets.QCheckBox("SMD perimeter gap fill")
+        self.smd_perim_fill.setChecked(False)
+        self.smd_outer_optics = QtWidgets.QCheckBox("SMD outer ring optics")
+        self.smd_outer_optics.setChecked(False)
+        self.smd_outer_fwhm = QtWidgets.QLineEdit("40")
+        self.smd_base_ring = QtWidgets.QLineEdit("7")
         self.cob_base_ring = QtWidgets.QLineEdit("6")
         self.cob_wall_clear_in = QtWidgets.QLineEdit("3.0")
         sim.addWidget(QtWidgets.QLabel("Sim mode"), 0, 0); sim.addWidget(self.sim_mode, 0, 1)
@@ -233,8 +242,12 @@ class MainWindow(QtWidgets.QWidget):
         sim.addWidget(QtWidgets.QLabel("Optics"), 2, 2); sim.addWidget(self.optics, 2, 3)
         sim.addWidget(QtWidgets.QLabel("Overlay"), 2, 0); sim.addWidget(self.overlay, 2, 1)
         sim.addWidget(self.qb_perim, 3, 0, 1, 4)
-        sim.addWidget(QtWidgets.QLabel("COB base ring (pitch)"), 4, 0); sim.addWidget(self.cob_base_ring, 4, 1)
-        sim.addWidget(QtWidgets.QLabel("COB wall clearance (in)"), 5, 0); sim.addWidget(self.cob_wall_clear_in, 5, 1)
+        sim.addWidget(self.smd_perim_fill, 4, 0, 1, 4)
+        sim.addWidget(self.smd_outer_optics, 5, 0, 1, 2)
+        sim.addWidget(QtWidgets.QLabel("Outer FWHM (deg)"), 5, 2); sim.addWidget(self.smd_outer_fwhm, 5, 3)
+        sim.addWidget(QtWidgets.QLabel("SMD base ring (pitch)"), 6, 0); sim.addWidget(self.smd_base_ring, 6, 1)
+        sim.addWidget(QtWidgets.QLabel("COB base ring (pitch)"), 7, 0); sim.addWidget(self.cob_base_ring, 7, 1)
+        sim.addWidget(QtWidgets.QLabel("COB wall clearance (in)"), 8, 0); sim.addWidget(self.cob_wall_clear_in, 8, 1)
         sim_box.layout().addLayout(sim)
         row_boxes.addWidget(sim_box, 1)
 
@@ -244,11 +257,14 @@ class MainWindow(QtWidgets.QWidget):
         self.sp_z = QtWidgets.QLineEdit("0.4572")
         self.sp_eff = QtWidgets.QLineEdit("1.0")
         self.sp_ppe = QtWidgets.QLineEdit("2.76")
+        self.sp_margin = QtWidgets.QLineEdit("0")
+        self.sp_edge_inset = QtWidgets.QLineEdit("0")
         sp.addWidget(QtWidgets.QLabel("PPF per fixture (µmol/s)"), 0, 0); sp.addWidget(self.sp_ppf, 0, 1)
         sp.addWidget(QtWidgets.QLabel("Mount Z (m)"), 0, 2); sp.addWidget(self.sp_z, 0, 3)
         sp.addWidget(QtWidgets.QLabel("Eff scale"), 1, 0); sp.addWidget(self.sp_eff, 1, 1)
         sp.addWidget(QtWidgets.QLabel("PPE (µmol/J)"), 1, 2); sp.addWidget(self.sp_ppe, 1, 3)
-        sp.addWidget(QtWidgets.QLabel("Margin (in)"), 2, 2); sp.addWidget(QtWidgets.QLabel("5 (fixed)"), 2, 3)
+        sp.addWidget(QtWidgets.QLabel("Margin (in)"), 2, 0); sp.addWidget(self.sp_margin, 2, 1)
+        sp.addWidget(QtWidgets.QLabel("Edge inset (in)"), 2, 2); sp.addWidget(self.sp_edge_inset, 2, 3)
         sp_box.layout().addLayout(sp)
         row_boxes.addWidget(sp_box, 1)
 
@@ -393,6 +409,11 @@ class MainWindow(QtWidgets.QWidget):
         if m == "Competitor":
             self.btn_run_smd.setText("Run Uniformity")
             self.btn_all.setText("Run + Visualize")
+            self.smd_perim_fill.setDisabled(True)
+            self.smd_outer_optics.setDisabled(True)
+            self.smd_outer_fwhm.setDisabled(True)
+            self.smd_outer_per_module.setDisabled(True)
+            self.smd_base_ring.setDisabled(True)
             self.cob_base_ring.setDisabled(True)
             self.cob_wall_clear_in.setDisabled(True)
         elif m == "COB":
@@ -401,18 +422,33 @@ class MainWindow(QtWidgets.QWidget):
             # COB solver variables are W/COB per ring (physically capped).
             if (self.wmin.text().strip() or "10") == "10":
                 self.wmin.setText("0")
-            if (self.wmax.text().strip() or "120") == "120":
-                self.wmax.setText("120")
+            if (self.wmax.text().strip() or "100") == "100":
+                self.wmax.setText("100")
+            self.smd_perim_fill.setDisabled(True)
+            self.smd_outer_optics.setDisabled(True)
+            self.smd_outer_fwhm.setDisabled(True)
+            self.smd_outer_per_module.setDisabled(True)
+            self.smd_base_ring.setDisabled(True)
             self.cob_base_ring.setDisabled(False)
             self.cob_wall_clear_in.setDisabled(False)
         elif m == "Quantum Board":
             self.btn_run_smd.setText("Run Uniformity (Quantum)")
             self.btn_all.setText("Run + Visualize (Quantum)")
+            self.smd_perim_fill.setDisabled(False)
+            self.smd_outer_optics.setDisabled(True)
+            self.smd_outer_fwhm.setDisabled(True)
+            self.smd_outer_per_module.setDisabled(True)
+            self.smd_base_ring.setDisabled(False)
             self.cob_base_ring.setDisabled(True)
             self.cob_wall_clear_in.setDisabled(True)
         else:
             self.btn_run_smd.setText("Run Uniformity (SMD)")
             self.btn_all.setText("Run + Visualize (SMD)")
+            self.smd_perim_fill.setDisabled(False)
+            self.smd_outer_optics.setDisabled(False)
+            self.smd_outer_fwhm.setDisabled(False)
+            self.smd_outer_per_module.setDisabled(False)
+            self.smd_base_ring.setDisabled(False)
             self.cob_base_ring.setDisabled(True)
             self.cob_wall_clear_in.setDisabled(True)
 
@@ -420,21 +456,29 @@ class MainWindow(QtWidgets.QWidget):
         env = self._make_env_base()
         env["LAYOUT_MODE"] = self.layout_mode.currentText()
         env["ALIGN_LONG_AXIS_X"] = "1" if self.align_x.isChecked() else "0"
-        env["PPE_IS_SYSTEM"] = "1"
+        env["PPE_IS_SYSTEM"] = os.getenv("PPE_IS_SYSTEM", "0")
         env["TARGET_PPFD"] = self.target.text().strip() or "1000"
         env["RUN_BASIS"] = "1" if self.run_basis.isChecked() else "0"
         env["W_MIN"] = self.wmin.text().strip() or "10"
-        env["W_MAX"] = self.wmax.text().strip() or "120"
+        env["W_MAX"] = self.wmax.text().strip() or "100"
         env["LAMBDA_S"] = self.lams.text().strip()
         env["LAMBDA_R"] = self.lamr.text().strip()
         env["LAMBDA_MEAN"] = self.lammean.text().strip() or "10"
         env["USE_CHEBYSHEV"] = "1" if self.cheby.isChecked() else "0"
-        env["OPTICS"] = self.optics.currentText()
+        if self.smd_outer_optics.isChecked():
+            env["OPTICS"] = "lens"
+        else:
+            env["OPTICS"] = self.optics.currentText()
+        env["SMD_PERIM_GAP_FILL"] = "1" if self.smd_perim_fill.isChecked() else "0"
+        env["SMD_OUTER_PER_MODULE"] = "1" if self.smd_outer_per_module.isChecked() else "0"
+        env["SMD_BASE_RING_N"] = self.smd_base_ring.text().strip() or "7"
+        env["SMD_OUTER_OPTICS"] = "1" if self.smd_outer_optics.isChecked() else "0"
+        env["SMD_OUTER_FWHM_DEG"] = self.smd_outer_fwhm.text().strip() or "40"
         return env
 
     def _env_spydr(self):
         env = self._make_env_base()
-        # Auto-compute grid so fixtures fill area with 5" inset margin.
+        # Auto-compute grid so fixtures fill area with minimal margin.
         # SPYDR footprint: 47" along X (bar length), ~43" along Y (bars span).
         try:
             L_ft = float(self.length.text())
@@ -444,7 +488,14 @@ class MainWindow(QtWidgets.QWidget):
         align = self.align_x.isChecked()
         if align and W_ft > L_ft:
             L_ft, W_ft = W_ft, L_ft  # long axis to X
-        margin_in = 5.0
+        try:
+            margin_in = float(self.sp_margin.text().strip() or "0")
+        except Exception:
+            margin_in = 0.0
+        try:
+            edge_inset_in = float(self.sp_edge_inset.text().strip() or "0")
+        except Exception:
+            edge_inset_in = 0.0
         usable_x_in = max(0.0, L_ft * 12.0 - 2 * margin_in)
         usable_y_in = max(0.0, W_ft * 12.0 - 2 * margin_in)
         nx = max(1, int(usable_x_in // 47.0))
@@ -456,7 +507,8 @@ class MainWindow(QtWidgets.QWidget):
         env["EFF_SCALE"] = self.sp_eff.text().strip() or "1.0"
         env["SPYDR_PPE_UMOL_PER_J"] = self.sp_ppe.text().strip() or "2.76"
         env["TARGET_PPFD"] = self.target.text().strip() or "1000"
-        env["MARGIN_IN"] = "0"
+        env["MARGIN_IN"] = str(margin_in)
+        env["SPYDR_EDGE_INSET_IN"] = str(edge_inset_in)
         env["ALIGN_LONG_AXIS_X"] = "1" if align else "0"
         return env
 
@@ -477,6 +529,8 @@ class MainWindow(QtWidgets.QWidget):
         env["SUBPATCH_GRID"] = self.subgrid.text().strip() or "1"
         env["QB_EDGE_PERIM"] = "1" if self.qb_perim.isChecked() else "0"
         env["QB_PERIM_INSET_M"] = "0.0" if self.qb_perim.isChecked() else "0.02"
+        env["SMD_PERIM_GAP_FILL"] = "1" if self.smd_perim_fill.isChecked() else "0"
+        env["SMD_BASE_RING_N"] = self.smd_base_ring.text().strip() or "7"
         return env
 
     def _env_cob(self):
@@ -487,10 +541,14 @@ class MainWindow(QtWidgets.QWidget):
         env["TARGET_PPFD"] = self.target.text().strip() or "1000"
         env["RUN_BASIS"] = "1" if self.run_basis.isChecked() else "0"
         env["W_MIN"] = self.wmin.text().strip() or "10"
-        env["W_MAX"] = self.wmax.text().strip() or "120"
+        env["W_MAX"] = self.wmax.text().strip() or "100"
         env["COB_BASE_RING_N"] = self.cob_base_ring.text().strip() or "6"
         env["COB_WALL_CLEARANCE_IN"] = self.cob_wall_clear_in.text().strip() or "3.0"
-        env["COB_STRIP_MIN_RING"] = "1"
+        env["COB_STRIP_MIN_RING"] = "0"
+        env["COB_OPTICS"] = os.getenv("COB_OPTICS", "none") # set to: outer, none
+        env["COB_OPTICS_RINGS"] = os.getenv("COB_OPTICS_RINGS", "")
+        env["COB_OPTICS_KIND"] = os.getenv("COB_OPTICS_KIND", "sym")
+        env["COB_OPTICS_FWHM_DEG"] = os.getenv("COB_OPTICS_FWHM_DEG", "60.0")
         env["LAMBDA_S"] = self.lams.text().strip()
         env["LAMBDA_R"] = self.lamr.text().strip()
         env["LAMBDA_MEAN"] = self.lammean.text().strip() or "10"
@@ -504,13 +562,76 @@ class MainWindow(QtWidgets.QWidget):
     def _ppfd_map_path(self) -> Path:
         return ROOT / "ppfd_map.txt"
 
+    def _first_float_in_line(self, line: str) -> float | None:
+        parts = line.replace("≈", " ").replace("W", " ").replace("µmol/J", " ").split()
+        for tok in parts:
+            try:
+                return float(tok)
+            except Exception:
+                continue
+        return None
+
+    def _read_smd_summary_details(self) -> dict[str, float]:
+        summ = self._summary_path_for_mode()
+        if not summ or not summ.exists():
+            return {}
+        try:
+            txt = summ.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return {}
+        out: dict[str, float] = {}
+        for ln in txt.splitlines():
+            s = ln.strip()
+            if s.startswith("total electrical input"):
+                val = self._first_float_in_line(s)
+                if val is not None:
+                    out["watts_elec"] = val
+            elif s.startswith("total effective"):
+                val = self._first_float_in_line(s)
+                if val is not None:
+                    out["watts_effective"] = val
+            elif s.startswith("avg PPE (mix, base)"):
+                val = self._first_float_in_line(s)
+                if val is not None:
+                    out["ppe_base"] = val
+            elif s.startswith("thermal tier:") and "avg" in s:
+                val = self._first_float_in_line(s[s.find("avg"):])
+                if val is not None:
+                    out["thermal_eff_avg"] = val
+        return out
+
+    def _read_spydr_power_meta(self) -> dict[str, float]:
+        meta_path = ROOT / "ies_sources" / "spydr3_power.txt"
+        if not meta_path.exists():
+            return {}
+        out: dict[str, float] = {}
+        try:
+            txt = meta_path.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            return {}
+        for ln in txt.splitlines():
+            if "=" not in ln:
+                continue
+            k, v = ln.split("=", 1)
+            k = k.strip()
+            try:
+                out[k] = float(v.strip())
+            except Exception:
+                continue
+        return out
+
     def _estimate_total_input_watts(self) -> float | None:
         mode = self.mode.currentText()
         if mode == "Competitor":
+            meta = self._read_spydr_power_meta()
+            if "total_w" in meta and float(meta["total_w"]) > 0:
+                return float(meta["total_w"])
             try:
                 ppe = float(self.sp_ppe.text().strip() or "0")
             except Exception:
                 return None
+            if "ppe_effective" in meta and float(meta["ppe_effective"]) > 0:
+                ppe = float(meta["ppe_effective"])
             if not (ppe > 0):
                 return None
             emitted_ppf = self._estimate_total_emitted_ppf()
@@ -518,35 +639,17 @@ class MainWindow(QtWidgets.QWidget):
                 return None
             return emitted_ppf / ppe
 
-        summ = self._summary_path_for_mode()
-        if summ and summ.exists():
-            try:
-                txt = summ.read_text(encoding="utf-8", errors="ignore")
-            except Exception:
-                return None
-            watts = None
-            for ln in txt.splitlines():
-                s = ln.strip()
-                if "total effective" in s:
-                    parts = s.replace("≈", " ").replace("W", " ").split()
-                    for tok in parts:
-                        try:
-                            watts = float(tok)
-                            break
-                        except ValueError:
-                            continue
-                    if watts is not None:
-                        break
-                if "total electrical power" in s and watts is None:
-                    parts = s.replace("≈", " ").replace("W", " ").split()
-                    for tok in parts:
-                        try:
-                            watts = float(tok)
-                            break
-                        except ValueError:
-                            continue
-            if watts is not None and watts > 0:
-                return watts
+        details = self._read_smd_summary_details()
+        if "watts_elec" in details and float(details["watts_elec"]) > 0:
+            return float(details["watts_elec"])
+        if "watts_effective" in details and float(details["watts_effective"]) > 0:
+            return float(details["watts_effective"])
+        return None
+
+    def _estimate_total_effective_watts(self) -> float | None:
+        details = self._read_smd_summary_details()
+        if "watts_effective" in details and float(details["watts_effective"]) > 0:
+            return float(details["watts_effective"])
         return None
 
     def _estimate_total_emitted_ppf(self) -> float | None:
@@ -612,7 +715,90 @@ class MainWindow(QtWidgets.QWidget):
                             return v if v > 0 else None
                         except ValueError:
                             continue
-        return None
+            return None
+
+    def _format_efficiency_report(
+        self,
+        *,
+        mode: str,
+        cap_scale: float | None,
+        ppf_out: float | None,
+        ppf_at_cap: float | None,
+        watts_elec: float | None,
+        watts_effective: float | None,
+        emitted_ppf: float | None,
+        details: dict[str, float] | None = None,
+    ) -> list[str]:
+        lines: list[str] = []
+        details = details or {}
+        if cap_scale is None:
+            cap_scale = 1.0
+        if ppf_at_cap is None and ppf_out is not None:
+            ppf_at_cap = ppf_out * cap_scale
+
+        watts_elec_at_cap = (watts_elec * cap_scale) if (watts_elec and cap_scale is not None) else None
+        watts_eff_at_cap = (watts_effective * cap_scale) if (watts_effective and cap_scale is not None) else None
+
+        ppe_system_elec = None
+        ppf_for_ppe = emitted_ppf if emitted_ppf else ppf_out
+        if ppf_for_ppe and watts_elec and watts_elec > 0:
+            ppe_system_elec = ppf_for_ppe / watts_elec
+
+        deuc_elec = None
+        if ppf_at_cap and watts_elec_at_cap and watts_elec_at_cap > 0:
+            deuc_elec = ppf_at_cap / watts_elec_at_cap
+
+        deuc_eff = None
+        if ppf_at_cap and watts_eff_at_cap and watts_eff_at_cap > 0:
+            deuc_eff = ppf_at_cap / watts_eff_at_cap
+
+        if os.getenv("DEBUG_EFF", "0") == "1" and cap_scale is not None:
+            if ppe_system_elec and deuc_elec and cap_scale <= 1.0:
+                if deuc_elec > ppe_system_elec + 1e-6:
+                    raise AssertionError("DEUC_elec exceeds PPE_system_elec; check denominators.")
+
+        if cap_scale is not None:
+            cap_line = f"  cap_scale={cap_scale:.3f}"
+            if ppf_out is not None:
+                cap_line += f"  ppf_out={ppf_out:.1f} umol/s"
+            if ppf_at_cap is not None:
+                cap_line += f"  ppf_at_cap={ppf_at_cap:.1f} umol/s"
+            lines.append(cap_line)
+
+        if watts_elec is not None:
+            w_line = f"  watts_elec={watts_elec:.1f} W"
+            if watts_elec_at_cap is not None:
+                w_line += f"  watts_elec@cap={watts_elec_at_cap:.1f} W"
+            lines.append(w_line)
+
+        if watts_effective is not None:
+            w_eff_line = f"  watts_effective={watts_effective:.1f} W"
+            if watts_eff_at_cap is not None:
+                w_eff_line += f"  watts_effective@cap={watts_eff_at_cap:.1f} W"
+            lines.append(w_eff_line)
+
+        ppe_base = details.get("ppe_base")
+        if ppe_base is not None:
+            lines.append(f"  PPE_base={ppe_base:.3f} umol/J")
+
+        if ppe_system_elec is not None or deuc_elec is not None:
+            ppe_line = ""
+            if ppe_system_elec is not None:
+                ppe_line += f"  PPE_system_elec={ppe_system_elec:.3f} umol/J"
+            if deuc_elec is not None:
+                ppe_line += f"  DEUC_elec={deuc_elec:.3f} umol/J"
+            if ppe_line:
+                lines.append(ppe_line)
+
+        if deuc_eff is not None:
+            lines.append(f"  DEUC_eff={deuc_eff:.3f} umol/J")
+
+        if mode == "SMD":
+            thermal_avg = details.get("thermal_eff_avg")
+            if thermal_avg is not None:
+                lines.append(f"  thermal: tiered avg={thermal_avg:.3f}")
+
+        return lines
 
     def _summary_path_for_mode(self) -> Path | None:
         m = self.mode.currentText()
@@ -630,6 +816,7 @@ class MainWindow(QtWidgets.QWidget):
         lines.append(f"Mode: {mode}")
 
         # Room + target
+        area_m2 = None
         try:
             length_ft = float(self.length.text())
             width_ft = float(self.width.text())
@@ -655,6 +842,7 @@ class MainWindow(QtWidgets.QWidget):
         # PPFD metrics from ppfd_map.txt
         lines.append("")
         lines.append("PPFD metrics (from ppfd_map.txt):")
+        m_result = None
         if compute_ppfd_metrics is None or format_ppfd_metrics_line is None or np is None:
             lines.append("  (metrics helpers unavailable; install numpy)")
         else:
@@ -694,6 +882,7 @@ class MainWindow(QtWidgets.QWidget):
                         emitted_ppf_umol_s=emitted_ppf,
                         legacy_metrics=True,
                     )
+                    m_result = m
                     try:
                         if cap and float(cap) > 0:
                             pmax = float(m.get("max", 0.0))
@@ -714,23 +903,33 @@ class MainWindow(QtWidgets.QWidget):
                     except Exception:
                         pass
                     lines.append(f"  {format_ppfd_metrics_line(m)}")
-                    try:
-                        if watts and "cap_scale" in m and cap:
-                            w_in = float(watts)
-                            w_cap = w_in * float(m["cap_scale"])
-                            lines.append(f"  watts_in≈{w_in:.1f} W, watts@cap≈{w_cap:.1f} W")
-                    except Exception:
-                        pass
 
         # Electrical / efficiency
         lines.append("")
         lines.append("Electrical / efficiency:")
+        cap_scale = None
+        ppf_out = None
+        ppf_at_cap = None
+        if isinstance(m_result, dict):
+            try:
+                cap_scale = float(m_result.get("cap_scale", 1.0))
+            except Exception:
+                cap_scale = None
+            try:
+                ppf_out = float(m_result.get("ppf_out")) if "ppf_out" in m_result else None
+            except Exception:
+                ppf_out = None
+            try:
+                ppf_at_cap = float(m_result.get("ppf_at_cap")) if "ppf_at_cap" in m_result else None
+            except Exception:
+                ppf_at_cap = None
         if mode == "Competitor":
             try:
                 sp_ppf = float(self.sp_ppf.text().strip() or "0")
                 ppe = float(self.sp_ppe.text().strip() or "0")
             except Exception:
                 sp_ppf = ppe = 0.0
+            meta = self._read_spydr_power_meta()
             try:
                 env_spy = self._env_spydr()
                 nx = int(env_spy.get("NX", "1"))
@@ -762,10 +961,25 @@ class MainWindow(QtWidgets.QWidget):
 
             lines.append(f"  fixtures={fixtures} (NX={nx}, NY={ny})  PPF/fixture={sp_ppf:.2f} µmol/s  dimmer={eff_scale_used:.4f}")
             lines.append(f"  total PPF ≈ {float(total_ppf_used):.2f} µmol/s")
-            if ppe > 0:
-                lines.append(f"  PPE={ppe:.3f} µmol/J  → estimated power ≈ {float(total_ppf_used)/ppe:.1f} W")
-            else:
-                lines.append("  PPE: (not set)")
+            ppe_eff = float(meta.get("ppe_effective", 0.0)) if meta else 0.0
+            total_w = float(meta.get("total_w", 0.0)) if meta else 0.0
+            watts_elec = float(total_w) if total_w > 0 else None
+            if watts_elec is None and ppe_eff > 0:
+                watts_elec = float(total_ppf_used) / ppe_eff
+            elif watts_elec is None and ppe > 0:
+                watts_elec = float(total_ppf_used) / ppe
+            details = {"ppe_base": ppe}
+            emitted_ppf = self._estimate_total_emitted_ppf()
+            lines.extend(self._format_efficiency_report(
+                mode=mode,
+                cap_scale=cap_scale,
+                ppf_out=ppf_out,
+                ppf_at_cap=ppf_at_cap,
+                watts_elec=watts_elec,
+                watts_effective=None,
+                emitted_ppf=emitted_ppf,
+                details=details,
+            ))
         else:
             if mode == "COB":
                 report = ROOT / "ies_sources" / "cob_solver_report.txt"
@@ -777,6 +991,20 @@ class MainWindow(QtWidgets.QWidget):
                         lines.append("")
                     except Exception:
                         pass
+            details = self._read_smd_summary_details()
+            watts_elec = details.get("watts_elec")
+            watts_effective = details.get("watts_effective")
+            emitted_ppf = self._estimate_total_emitted_ppf()
+            lines.extend(self._format_efficiency_report(
+                mode=mode,
+                cap_scale=cap_scale,
+                ppf_out=ppf_out,
+                ppf_at_cap=ppf_at_cap,
+                watts_elec=watts_elec,
+                watts_effective=watts_effective,
+                emitted_ppf=emitted_ppf,
+                details=details,
+            ))
             summ = self._summary_path_for_mode()
             if summ and summ.exists():
                 try:
@@ -919,6 +1147,8 @@ class MainWindow(QtWidgets.QWidget):
 
     def run_vis(self):
         env = os.environ.copy()
+        env.setdefault("MPLBACKEND", "Agg")
+        env.setdefault("MPLCONFIGDIR", str(ROOT / ".matplotlib"))
         overlay = self.overlay.currentText()
         m = self.mode.currentText()
         if m == "Competitor" and overlay == "auto":
